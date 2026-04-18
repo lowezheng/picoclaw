@@ -161,6 +161,18 @@ func (c *OpenResponsesChannel) writeJSONResponseWithStream(
 					{Type: "reasoning_text", Text: ev.content},
 				},
 			})
+		case eventKindImage:
+			itemID := fmt.Sprintf("%s_%d", msgID, msgSeq)
+			msgSeq++
+			outputItems = append(outputItems, ResponseItem{
+				Type:   "message",
+				ID:     itemID,
+				Status: "completed",
+				Role:   "assistant",
+				Content: []Content{
+					{Type: "output_image", ImageURL: ev.imageURL},
+				},
+			})
 		}
 	}
 
@@ -434,6 +446,67 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 				ID:      itemID,
 				Status:  "completed",
 				Content: []Content{{Type: "reasoning_text", Text: ev.content}},
+			}
+			writeSSEEvent(w, "response.output_item.done", ResponseEvent{
+				Type:           "response.output_item.done",
+				SequenceNumber: seq,
+				OutputIndex:    len(outputItems),
+				Item:           doneItem,
+			})
+			seq++
+			flushAndExtend()
+
+			outputItems = append(outputItems, doneItem)
+
+		case eventKindImage:
+			// --- image item sequence (discrete, no deltas) ---
+			addedItem := ResponseItem{
+				Type:    "message",
+				ID:      itemID,
+				Status:  "in_progress",
+				Role:    "assistant",
+				Content: []Content{},
+			}
+			writeSSEEvent(w, "response.output_item.added", ResponseEvent{
+				Type:           "response.output_item.added",
+				SequenceNumber: seq,
+				OutputIndex:    len(outputItems),
+				Item:           addedItem,
+			})
+			seq++
+			flushAndExtend()
+
+			// response.content_part.added
+			writeSSEEvent(w, "response.content_part.added", ResponseEvent{
+				Type:           "response.content_part.added",
+				SequenceNumber: seq,
+				ItemID:         itemID,
+				OutputIndex:    len(outputItems),
+				ContentIndex:   0,
+				Part:           Content{Type: "output_image", ImageURL: ""},
+			})
+			seq++
+			flushAndExtend()
+
+			// response.content_part.done (image is discrete, done immediately with full data)
+			writeSSEEvent(w, "response.content_part.done", ResponseEvent{
+				Type:           "response.content_part.done",
+				SequenceNumber: seq,
+				ItemID:         itemID,
+				OutputIndex:    len(outputItems),
+				ContentIndex:   0,
+				Part:           Content{Type: "output_image", ImageURL: ev.imageURL},
+			})
+			seq++
+			flushAndExtend()
+
+			// response.output_item.done
+			doneItem := ResponseItem{
+				Type:    "message",
+				ID:      itemID,
+				Status:  "completed",
+				Role:    "assistant",
+				Content: []Content{{Type: "output_image", ImageURL: ev.imageURL}},
 			}
 			writeSSEEvent(w, "response.output_item.done", ResponseEvent{
 				Type:           "response.output_item.done",

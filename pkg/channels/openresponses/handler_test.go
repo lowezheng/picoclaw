@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/media"
 )
 
 func newTestChannel(t *testing.T, token string) (*OpenResponsesChannel, *bus.MessageBus) {
@@ -706,5 +709,229 @@ func TestWriteSSEResponseStream_Reasoning(t *testing.T) {
 	}
 	if doneEvent.Item.Content[0].Text != "Thinking..." {
 		t.Errorf("expected 'Thinking...', got %s", doneEvent.Item.Content[0].Text)
+	}
+}
+
+func TestServeHTTPJSONResponseWithImage(t *testing.T) {
+	ch, msgBus, store := newTestChannelWithStore(t, "secret")
+	defer ch.Stop(context.Background())
+
+	tmpDir := t.TempDir()
+	imgPath := filepath.Join(tmpDir, "test.png")
+	_ = os.WriteFile(imgPath, []byte("fake image bytes"), 0644)
+	ref, _ := store.Store(imgPath, media.MediaMeta{
+		Filename:    "test.png",
+		ContentType: "image/png",
+	}, "test-scope")
+
+	go func() {
+		for {
+			select {
+			case msg, ok := <-msgBus.InboundChan():
+				if !ok {
+					return
+				}
+				time.Sleep(20 * time.Millisecond)
+				ch.Send(context.Background(), bus.OutboundMessage{
+					Channel: msg.Context.Channel,
+					ChatID:  msg.Context.ChatID,
+					Content: "Here is your image:",
+				})
+				ch.SendMedia(context.Background(), bus.OutboundMediaMessage{
+					Channel: msg.Context.Channel,
+					ChatID:  msg.Context.ChatID,
+					Parts: []bus.MediaPart{
+						{Type: "image", Ref: ref, Filename: "test.png", ContentType: "image/png"},
+					},
+				})
+				ch.Send(context.Background(), bus.OutboundMessage{
+					Channel: msg.Context.Channel,
+					ChatID:  msg.Context.ChatID,
+					Content: "",
+					Context: bus.InboundContext{Raw: map[string]string{"message_kind": "turn_end"}},
+				})
+			}
+		}
+	}()
+
+	body, _ := json.Marshal(CreateResponseRequest{Input: "generate image"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	ch.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp Response
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(resp.Output) != 2 {
+		t.Fatalf("expected 2 output items, got %d", len(resp.Output))
+	}
+	if resp.Output[0].Type != "message" || resp.Output[0].Content[0].Type != "output_text" {
+		t.Errorf("expected first item text message, got %+v", resp.Output[0])
+	}
+	if resp.Output[1].Type != "message" || resp.Output[1].Content[0].Type != "output_image" {
+		t.Errorf("expected second item image message, got %+v", resp.Output[1])
+	}
+	if !strings.HasPrefix(resp.Output[1].Content[0].ImageURL, "data:image/png;base64,") {
+		t.Errorf("expected image data URL, got %s", resp.Output[1].Content[0].ImageURL)
+	}
+}
+
+func TestServeHTTPSSEStreamWithImage(t *testing.T) {
+	ch, msgBus, store := newTestChannelWithStore(t, "secret")
+	defer ch.Stop(context.Background())
+
+	tmpDir := t.TempDir()
+	imgPath := filepath.Join(tmpDir, "test.png")
+	_ = os.WriteFile(imgPath, []byte("fake image bytes"), 0644)
+	ref, _ := store.Store(imgPath, media.MediaMeta{
+		Filename:    "test.png",
+		ContentType: "image/png",
+	}, "test-scope")
+
+	go func() {
+		for {
+			select {
+			case msg, ok := <-msgBus.InboundChan():
+				if !ok {
+					return
+				}
+				time.Sleep(20 * time.Millisecond)
+				ch.Send(context.Background(), bus.OutboundMessage{
+					Channel: msg.Context.Channel,
+					ChatID:  msg.Context.ChatID,
+					Content: "Image follows:",
+				})
+				ch.SendMedia(context.Background(), bus.OutboundMediaMessage{
+					Channel: msg.Context.Channel,
+					ChatID:  msg.Context.ChatID,
+					Parts: []bus.MediaPart{
+						{Type: "image", Ref: ref, Filename: "test.png", ContentType: "image/png"},
+					},
+				})
+				ch.Send(context.Background(), bus.OutboundMessage{
+					Channel: msg.Context.Channel,
+					ChatID:  msg.Context.ChatID,
+					Content: "",
+					Context: bus.InboundContext{Raw: map[string]string{"message_kind": "turn_end"}},
+				})
+			}
+		}
+	}()
+
+	body, _ := json.Marshal(CreateResponseRequest{Input: "show me", Stream: true})
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	ch.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	bodyStr := rr.Body.String()
+
+	// Must contain standard SSE framing.
+	if !strings.Contains(bodyStr, "event: response.in_progress") {
+		t.Error("missing response.in_progress")
+	}
+	if !strings.Contains(bodyStr, "event: response.completed") {
+		t.Error("missing response.completed")
+	}
+	if !strings.Contains(bodyStr, "data: [DONE]") {
+		t.Error("missing [DONE] terminator")
+	}
+
+	// Must contain the text item.
+	if !strings.Contains(bodyStr, "Image follows:") {
+		t.Error("missing text content")
+	}
+
+	// Must contain image-specific SSE events.
+	if !strings.Contains(bodyStr, `"type":"output_image"`) {
+		t.Error("missing output_image content part")
+	}
+	if !strings.Contains(bodyStr, "data:image/png;base64,") {
+		t.Error("missing image data URL in SSE stream")
+	}
+
+	// Image events should NOT contain delta events.
+	if strings.Contains(bodyStr, "output_image.delta") {
+		t.Error("output_image should not produce delta events")
+	}
+}
+
+func TestServeHTTPJSONResponseTextThenImageThenText(t *testing.T) {
+	ch, msgBus, store := newTestChannelWithStore(t, "secret")
+	defer ch.Stop(context.Background())
+
+	tmpDir := t.TempDir()
+	imgPath := filepath.Join(tmpDir, "test.png")
+	_ = os.WriteFile(imgPath, []byte("img"), 0644)
+	ref, _ := store.Store(imgPath, media.MediaMeta{
+		Filename:    "test.png",
+		ContentType: "image/png",
+	}, "test-scope")
+
+	go func() {
+		for {
+			select {
+			case msg, ok := <-msgBus.InboundChan():
+				if !ok {
+					return
+				}
+				time.Sleep(20 * time.Millisecond)
+				ch.Send(context.Background(), bus.OutboundMessage{
+					Channel: msg.Context.Channel,
+					ChatID:  msg.Context.ChatID,
+					Content: "Before",
+				})
+				ch.SendMedia(context.Background(), bus.OutboundMediaMessage{
+					Channel: msg.Context.Channel,
+					ChatID:  msg.Context.ChatID,
+					Parts:   []bus.MediaPart{{Type: "image", Ref: ref}},
+				})
+				ch.Send(context.Background(), bus.OutboundMessage{
+					Channel: msg.Context.Channel,
+					ChatID:  msg.Context.ChatID,
+					Content: "After",
+				})
+				ch.Send(context.Background(), bus.OutboundMessage{
+					Channel: msg.Context.Channel,
+					ChatID:  msg.Context.ChatID,
+					Content: "",
+					Context: bus.InboundContext{Raw: map[string]string{"message_kind": "turn_end"}},
+				})
+			}
+		}
+	}()
+
+	body, _ := json.Marshal(CreateResponseRequest{Input: "mixed"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	ch.ServeHTTP(rr, req)
+
+	var resp Response
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if len(resp.Output) != 3 {
+		t.Fatalf("expected 3 output items, got %d", len(resp.Output))
+	}
+	if resp.Output[0].Content[0].Text != "Before" {
+		t.Errorf("expected 'Before', got %s", resp.Output[0].Content[0].Text)
+	}
+	if resp.Output[1].Content[0].Type != "output_image" {
+		t.Errorf("expected image at index 1, got %s", resp.Output[1].Content[0].Type)
+	}
+	if resp.Output[2].Content[0].Text != "After" {
+		t.Errorf("expected 'After', got %s", resp.Output[2].Content[0].Text)
 	}
 }

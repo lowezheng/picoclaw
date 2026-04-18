@@ -460,3 +460,62 @@ func TestSend_TextMessage(t *testing.T) {
 
 	stream.close()
 }
+
+func TestSendMediaNoActiveConversation(t *testing.T) {
+	ch, _, _ := newTestChannelWithStore(t, "secret")
+	defer ch.Stop(context.Background())
+
+	// No dispatch started; SendMedia should silently drop.
+	ids, err := ch.SendMedia(context.Background(), bus.OutboundMediaMessage{
+		Channel: "openresponses",
+		ChatID:  "nonexistent",
+		Parts:   []bus.MediaPart{{Type: "image", Ref: "media://fake"}},
+	})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if len(ids) != 0 {
+		t.Errorf("expected 0 sent ids, got %d", len(ids))
+	}
+}
+
+func TestSendMediaSkipNonImageParts(t *testing.T) {
+	ch, _, store := newTestChannelWithStore(t, "secret")
+	defer ch.Stop(context.Background())
+
+	tmpDir := t.TempDir()
+	imgPath := filepath.Join(tmpDir, "test.png")
+	_ = os.WriteFile(imgPath, []byte("img"), 0644)
+	imgRef, _ := store.Store(imgPath, media.MediaMeta{
+		Filename:    "test.png",
+		ContentType: "image/png",
+	}, "test-scope")
+
+	stream, _, _ := ch.dispatch(context.Background(), "conv_skip", "test")
+
+	ids, err := ch.SendMedia(context.Background(), bus.OutboundMediaMessage{
+		Channel: "openresponses",
+		ChatID:  "conv_skip",
+		Parts: []bus.MediaPart{
+			{Type: "audio", Ref: "media://audio123"},
+			{Type: "image", Ref: imgRef, Filename: "test.png", ContentType: "image/png"},
+			{Type: "video", Ref: "media://video456"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ids) != 1 {
+		t.Fatalf("expected 1 sent id (only image), got %d", len(ids))
+	}
+
+	// Verify only the image event is in the stream.
+	select {
+	case ev := <-stream.events:
+		if ev.kind != eventKindImage {
+			t.Errorf("expected image event, got %s", ev.kind)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for image event")
+	}
+}
