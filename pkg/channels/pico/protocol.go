@@ -23,7 +23,8 @@ const (
 	PayloadKeyContent = "content"
 	PayloadKeyThought = "thought"
 
-	MessageKindThought = "thought"
+	MessageKindThought   = "thought"
+	MessageKindTurnEnd   = "turn_end"
 )
 
 // PicoMessage is the wire format for all Pico Protocol messages.

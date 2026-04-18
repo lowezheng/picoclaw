@@ -46,6 +46,13 @@ func outboundMessageIsThought(msg bus.OutboundMessage) bool {
 	return strings.EqualFold(strings.TrimSpace(msg.Context.Raw["message_kind"]), MessageKindThought)
 }
 
+func outboundMessageIsTurnEnd(msg bus.OutboundMessage) bool {
+	if len(msg.Context.Raw) == 0 {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(msg.Context.Raw["message_kind"]), MessageKindTurnEnd)
+}
+
 // writeJSON sends a JSON message to the connection with write locking.
 func (pc *picoConn) writeJSON(v any) error {
 	if pc.closed.Load() {
@@ -259,6 +266,9 @@ func (c *PicoChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (c *PicoChannel) Send(ctx context.Context, msg bus.OutboundMessage) ([]string, error) {
 	if !c.IsRunning() {
 		return nil, channels.ErrNotRunning
+	}
+	if outboundMessageIsTurnEnd(msg) {
+		return nil, nil
 	}
 	isThought := outboundMessageIsThought(msg)
 

@@ -802,10 +802,17 @@ func TestAgentLoop_Run_AutoContinuesLateSteeringMessage(t *testing.T) {
 
 	noExtraCtx, cancelNoExtra := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancelNoExtra()
-	select {
-	case out2 := <-msgBus.OutboundChan():
-		t.Fatalf("expected stale direct response to be suppressed, got extra outbound %q", out2.Content)
-	case <-noExtraCtx.Done():
+selectLoop:
+	for {
+		select {
+		case out2 := <-msgBus.OutboundChan():
+			if out2.Context.Raw["message_kind"] == "turn_end" {
+				continue
+			}
+			t.Fatalf("expected stale direct response to be suppressed, got extra outbound %q", out2.Content)
+		case <-noExtraCtx.Done():
+			break selectLoop
+		}
 	}
 
 	cancelRun()

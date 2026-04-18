@@ -16,6 +16,18 @@ func (al *AgentLoop) processMessageSync(ctx context.Context, msg bus.InboundMess
 
 	response, err := al.processMessage(ctx, msg)
 	al.publishResponseOrError(ctx, msg.Channel, msg.ChatID, msg.SessionKey, response, err)
+
+	if msg.Channel != "" {
+		_ = al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+			Context: bus.InboundContext{
+				Channel: msg.Channel,
+				ChatID:  msg.ChatID,
+				Raw: map[string]string{
+					metadataKeyMessageKind: messageKindTurnEnd,
+				},
+			},
+		})
+	}
 }
 
 func (al *AgentLoop) runTurnWithSteering(ctx context.Context, initialMsg bus.InboundMessage) {
@@ -78,6 +90,19 @@ func (al *AgentLoop) runTurnWithSteering(ctx context.Context, initialMsg bus.Inb
 	// Publish final response
 	if finalResponse != "" {
 		al.PublishResponseIfNeeded(ctx, target.Channel, target.ChatID, target.SessionKey, finalResponse)
+	}
+
+	// Signal turn completion to any streaming channels.
+	if target != nil && target.Channel != "" {
+		_ = al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+			Context: bus.InboundContext{
+				Channel: target.Channel,
+				ChatID:  target.ChatID,
+				Raw: map[string]string{
+					metadataKeyMessageKind: messageKindTurnEnd,
+				},
+			},
+		})
 	}
 }
 
