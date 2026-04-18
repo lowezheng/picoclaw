@@ -2,12 +2,17 @@ package openresponses
 
 import (
 	"context"
+	"encoding/base64"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/media"
 )
 
 func TestNewOpenResponsesChannel(t *testing.T) {
@@ -336,6 +341,80 @@ func TestStreamEventImageKind(t *testing.T) {
 	}
 	if ev.caption != "a cat" {
 		t.Errorf("unexpected caption: %s", ev.caption)
+	}
+}
+
+func newTestChannelWithStore(t *testing.T, token string) (*OpenResponsesChannel, *bus.MessageBus, media.MediaStore) {
+	msgBus := bus.NewMessageBus()
+	bc := &config.Channel{}
+	bc.SetName("openresponses")
+	cfg := &config.OpenResponsesSettings{
+		Token:          *config.NewSecureString(token),
+		RequestTimeout: 5,
+	}
+	ch, err := NewOpenResponsesChannel(bc, cfg, msgBus)
+	if err != nil {
+		t.Fatalf("failed to create channel: %v", err)
+	}
+	store := media.NewFileMediaStore()
+	ch.SetMediaStore(store)
+	if err := ch.Start(context.Background()); err != nil {
+		t.Fatalf("failed to start channel: %v", err)
+	}
+	return ch, msgBus, store
+}
+
+func TestSendMedia(t *testing.T) {
+	ch, _, store := newTestChannelWithStore(t, "secret")
+	defer ch.Stop(context.Background())
+
+	tmpDir := t.TempDir()
+	imgPath := filepath.Join(tmpDir, "test.png")
+	if err := os.WriteFile(imgPath, []byte("fake image bytes"), 0644); err != nil {
+		t.Fatalf("failed to write temp image: %v", err)
+	}
+
+	ref, err := store.Store(imgPath, media.MediaMeta{
+		Filename:    "test.png",
+		ContentType: "image/png",
+	}, "test-scope")
+	if err != nil {
+		t.Fatalf("failed to store image: %v", err)
+	}
+
+	stream, _, err := ch.dispatch(context.Background(), "conv_img", "generate image")
+	if err != nil {
+		t.Fatalf("dispatch failed: %v", err)
+	}
+
+	ids, err := ch.SendMedia(context.Background(), bus.OutboundMediaMessage{
+		Channel: "openresponses",
+		ChatID:  "conv_img",
+		Parts: []bus.MediaPart{
+			{Type: "image", Ref: ref, Filename: "test.png", ContentType: "image/png"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SendMedia failed: %v", err)
+	}
+	if len(ids) != 1 {
+		t.Fatalf("expected 1 sent id, got %d", len(ids))
+	}
+
+	select {
+	case ev := <-stream.events:
+		if ev.kind != eventKindImage {
+			t.Fatalf("expected eventKindImage, got %s", ev.kind)
+		}
+		if !strings.HasPrefix(ev.imageURL, "data:image/png;base64,") {
+			t.Errorf("expected data URL prefix, got %s", ev.imageURL)
+		}
+		expectedB64 := base64.StdEncoding.EncodeToString([]byte("fake image bytes"))
+		if !strings.HasSuffix(ev.imageURL, expectedB64) {
+			t.Errorf("imageURL does not end with expected base64 payload")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for image event")
 	}
 }
 

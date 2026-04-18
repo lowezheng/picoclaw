@@ -2,6 +2,9 @@ package openresponses
 
 import (
 	"context"
+	"encoding/base64"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -192,6 +195,110 @@ func (c *OpenResponsesChannel) dispatch(
 
 	c.HandleInboundContext(ctx, conversationID, content, nil, inboundCtx, sender)
 	return s, false, nil
+}
+
+// SendMedia implements channels.MediaSender. It converts image MediaParts
+// into output_image stream events for the matching conversation.
+func (c *OpenResponsesChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMessage) ([]string, error) {
+	if !c.IsRunning() {
+		return nil, channels.ErrNotRunning
+	}
+
+	conversationID := msg.ChatID
+	if conversationID == "" {
+		return nil, nil
+	}
+
+	c.convMu.Lock()
+	st, found := c.convs[conversationID]
+	c.convMu.Unlock()
+
+	if !found {
+		return nil, nil
+	}
+
+	store := c.GetMediaStore()
+	if store == nil {
+		logger.WarnC("openresponses", "SendMedia: no media store available")
+		return nil, nil
+	}
+
+	var sentIDs []string
+	for _, part := range msg.Parts {
+		if part.Type != "image" {
+			continue
+		}
+		if !strings.HasPrefix(part.Ref, "media://") {
+			continue
+		}
+
+		localPath, meta, err := store.ResolveWithMeta(part.Ref)
+		if err != nil {
+			logger.WarnCF("openresponses", "SendMedia: failed to resolve media ref", map[string]any{
+				"ref":   part.Ref,
+				"error": err.Error(),
+			})
+			continue
+		}
+
+		mime := meta.ContentType
+		if mime == "" {
+			mime = mimeFromExt(part.Filename)
+		}
+		if !strings.HasPrefix(mime, "image/") {
+			continue
+		}
+
+		dataURL, err := encodeFileToDataURL(localPath, mime)
+		if err != nil {
+			logger.WarnCF("openresponses", "SendMedia: failed to encode image", map[string]any{
+				"path":  localPath,
+				"error": err.Error(),
+			})
+			continue
+		}
+
+		ev := streamEvent{
+			kind:     eventKindImage,
+			imageURL: dataURL,
+			caption:  part.Caption,
+		}
+		if ok := st.stream.push(ev); ok {
+			sentIDs = append(sentIDs, part.Ref)
+		}
+	}
+
+	return sentIDs, nil
+}
+
+// encodeFileToDataURL reads a local file and returns a base64 data URL.
+func encodeFileToDataURL(localPath, mime string) (string, error) {
+	data, err := os.ReadFile(localPath)
+	if err != nil {
+		return "", err
+	}
+	prefix := "data:" + mime + ";base64,"
+	return prefix + base64.StdEncoding.EncodeToString(data), nil
+}
+
+// mimeFromExt guesses a MIME type from a filename extension.
+func mimeFromExt(filename string) string {
+	switch strings.ToLower(filepath.Ext(filename)) {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".bmp":
+		return "image/bmp"
+	case ".svg":
+		return "image/svg+xml"
+	default:
+		return "image/png"
+	}
 }
 
 func (c *OpenResponsesChannel) maxBodySize() int64 {
