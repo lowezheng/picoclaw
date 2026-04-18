@@ -146,8 +146,7 @@ func (c *OpenResponsesChannel) writeJSONResponseWithStream(
 }
 
 // writeSSEResponseStream reads messages from the stream in real time and
-// writes them as SSE events. A heartbeat goroutine sends keep-alive comments
-// every 5 seconds to prevent proxy timeout during long tool execution.
+// writes them as SSE events following the OpenResponses streaming protocol.
 func (c *OpenResponsesChannel) writeSSEResponseStream(
 	w http.ResponseWriter,
 	r *http.Request,
