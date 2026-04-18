@@ -115,7 +115,11 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 		return nil, nil
 	}
 
-	ev = streamEvent{kind: eventKindText, content: msg.Content}
+	if raw["message_kind"] == "thought" {
+		ev = streamEvent{kind: eventKindReasoning, content: msg.Content}
+	} else {
+		ev = streamEvent{kind: eventKindText, content: msg.Content}
+	}
 	stream.push(ev)
 	return nil, nil
 }

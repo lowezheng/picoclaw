@@ -119,6 +119,39 @@ func (al *AgentLoop) publishPicoReasoning(ctx context.Context, reasoningContent,
 	}
 }
 
+func (al *AgentLoop) publishOpenResponsesReasoning(ctx context.Context, reasoningContent, chatID string) {
+	if reasoningContent == "" || chatID == "" {
+		return
+	}
+	if ctx.Err() != nil {
+		return
+	}
+
+	pubCtx, pubCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer pubCancel()
+
+	outCtx := bus.NewOutboundContext("openresponses", chatID, "")
+	outCtx.Raw = map[string]string{metadataKeyMessageKind: messageKindThought}
+
+	if err := al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
+		Context: outCtx,
+		Content: reasoningContent,
+	}); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
+			errors.Is(err, bus.ErrBusClosed) {
+			logger.DebugCF("agent", "OpenResponses reasoning publish skipped (timeout/cancel)", map[string]any{
+				"channel": "openresponses",
+				"error":   err.Error(),
+			})
+		} else {
+			logger.WarnCF("agent", "Failed to publish OpenResponses reasoning (best-effort)", map[string]any{
+				"channel": "openresponses",
+				"error":   err.Error(),
+			})
+		}
+	}
+}
+
 func (al *AgentLoop) handleReasoning(
 	ctx context.Context,
 	reasoningContent, channelName, channelID string,

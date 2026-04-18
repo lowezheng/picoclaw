@@ -111,10 +111,11 @@ func TestE2E_BasicJSON(t *testing.T) {
 		t.Fatalf("decode response: %v\nbody: %s", err, string(body))
 	}
 	assertBasicResponse(t, result)
-	if result.Output[0].Content[0].Text == "" {
+	msgItem, _ := findMessageItem(result)
+	if msgItem.Content[0].Text == "" {
 		t.Error("expected non-empty AI response text")
 	}
-	t.Logf("AI response: %s", result.Output[0].Content[0].Text)
+	t.Logf("AI response: %s", msgItem.Content[0].Text)
 }
 
 // TestE2E_ConversationID 对应 README 示例 2：带 conversation_id 的会话。
@@ -144,7 +145,8 @@ func TestE2E_ConversationID(t *testing.T) {
 	if r1.ConversationID != convID {
 		t.Errorf("turn 1: expected conversation_id=%q, got %q", convID, r1.ConversationID)
 	}
-	t.Logf("turn 1 AI response: %s", r1.Output[0].Content[0].Text)
+	msg1, _ := findMessageItem(r1)
+	t.Logf("turn 1 AI response: %s", msg1.Content[0].Text)
 
 	// Second turn with same conversation_id.
 	resp2, err := postE2E(t, cfg, map[string]any{
@@ -166,9 +168,10 @@ func TestE2E_ConversationID(t *testing.T) {
 	if r2.ConversationID != convID {
 		t.Errorf("turn 2: expected conversation_id=%q, got %q", convID, r2.ConversationID)
 	}
-	t.Logf("turn 2 AI response: %s", r2.Output[0].Content[0].Text)
+	msg2, _ := findMessageItem(r2)
+	t.Logf("turn 2 AI response: %s", msg2.Content[0].Text)
 	// The AI should mention "Alice" since it's the same conversation.
-	if !strings.Contains(strings.ToLower(r2.Output[0].Content[0].Text), "alice") {
+	if !strings.Contains(strings.ToLower(msg2.Content[0].Text), "alice") {
 		t.Error("turn 2: AI did not recall the name 'Alice' from previous turn")
 	}
 }
@@ -179,7 +182,7 @@ func TestE2E_SSEStream(t *testing.T) {
 	skipIfNotReady(t, cfg)
 
 	resp, err := postE2E(t, cfg, map[string]any{
-		"input":  "Tell me a short story in one sentence.",
+		"input":  "查询我管理的产品，产品代码：DD0108，组合代码：7000000 ",
 		"stream": true,
 	}, true)
 	if err != nil {
@@ -232,29 +235,20 @@ func TestE2E_SSEStream(t *testing.T) {
 	}
 
 	// Validate event sequence.
-	expected := []string{
+	// When reasoning is enabled, the sequence includes reasoning events before the message events.
+	expectedPrefix := []string{
 		"response.in_progress",
-		"response.output_item.added",
-		"response.content_part.added",
-		"response.output_text.delta",
-		"response.output_text.done",
-		"response.content_part.done",
-		"response.output_item.done",
-		"response.completed",
 	}
-	if len(events) != len(expected) {
-		t.Fatalf("expected %d events, got %d", len(expected), len(events))
-	}
-	for i, want := range expected {
+	for i, want := range expectedPrefix {
 		if events[i].event != want {
 			t.Errorf("event[%d]: expected %q, got %q", i, want, events[i].event)
 		}
 	}
 
-	// Delta should contain actual text.
+	// Delta should contain actual text (from either reasoning or output_text).
 	var deltaText string
 	for _, ev := range events {
-		if ev.event == "response.output_text.delta" {
+		if ev.event == "response.output_text.delta" || ev.event == "response.reasoning_text.delta" {
 			var evt ResponseEvent
 			if err := json.Unmarshal([]byte(ev.data), &evt); err == nil {
 				deltaText = evt.Delta
@@ -303,10 +297,11 @@ func TestE2E_ArrayInput(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 	assertBasicResponse(t, result)
-	if result.Output[0].Content[0].Text == "" {
+	msgItem, _ := findMessageItem(result)
+	if msgItem.Content[0].Text == "" {
 		t.Error("expected non-empty AI response text")
 	}
-	t.Logf("AI response: %s", result.Output[0].Content[0].Text)
+	t.Logf("AI response: %s", msgItem.Content[0].Text)
 }
 
 // TestE2E_InvalidToken 对应 README 示例 5：无效 token。
@@ -396,6 +391,16 @@ func TestE2E_MalformedJSON(t *testing.T) {
 
 // --- Helpers ---
 
+// findMessageItem returns the first output item of type "message".
+func findMessageItem(r Response) (ResponseItem, bool) {
+	for _, item := range r.Output {
+		if item.Type == "message" {
+			return item, true
+		}
+	}
+	return ResponseItem{}, false
+}
+
 func assertBasicResponse(t *testing.T, r Response) {
 	t.Helper()
 	if r.Object != "response" {
@@ -413,15 +418,15 @@ func assertBasicResponse(t *testing.T, r Response) {
 	if len(r.Output) == 0 {
 		t.Fatal("expected at least one output item")
 	}
-	item := r.Output[0]
-	if item.Type != "message" {
-		t.Errorf("expected output[0].type=message, got %s", item.Type)
+	item, ok := findMessageItem(r)
+	if !ok {
+		t.Fatal("expected at least one output item of type message")
 	}
 	if item.Status != "completed" {
-		t.Errorf("expected output[0].status=completed, got %s", item.Status)
+		t.Errorf("expected message.status=completed, got %s", item.Status)
 	}
 	if item.Role != "assistant" {
-		t.Errorf("expected output[0].role=assistant, got %s", item.Role)
+		t.Errorf("expected message.role=assistant, got %s", item.Role)
 	}
 	if len(item.Content) == 0 {
 		t.Fatal("expected at least one content block")

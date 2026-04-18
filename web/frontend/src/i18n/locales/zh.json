@@ -61,6 +61,7 @@
       "step4": "马上就好..."
     },
     "reasoningLabel": "思考",
+    "toolCallLabel": "工具: {{tool}}",
     "history": "历史记录",
     "noHistory": "暂无对话历史",
     "historyLoadFailed": "加载历史记录失败",

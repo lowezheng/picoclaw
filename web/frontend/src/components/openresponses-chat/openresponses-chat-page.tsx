@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
 import { AssistantMessage } from "@/components/chat/assistant-message"
+import { ToolCallMessage } from "@/components/chat/tool-call-message"
 import {
   ChatComposer,
   type ChatInputDisabledReason,
@@ -80,6 +81,34 @@ function resolveChatInputDisabledReason({
 
   if (connectionState === "error") {
     return "websocketError"
+  }
+
+  return null
+}
+
+// Known tool names that produce structured output in the chat
+const KNOWN_TOOL_NAMES = ["exec", "web_search", "spawn", "mcp"]
+
+/**
+ * Detect if a message content looks like a tool call output.
+ * Since the backend sends tool results as plain text without metadata,
+ * we use heuristics: content that starts with a known tool name
+ * followed by structured output patterns.
+ */
+function detectToolCall(content: string): { toolName: string; args: string; output: string } | null {
+  if (!content || content.length < 3) return null
+  const trimmed = content.trim()
+  const firstLine = trimmed.split("\n")[0]
+
+  for (const name of KNOWN_TOOL_NAMES) {
+    if (firstLine.toLowerCase().startsWith(name)) {
+      const rest = trimmed.slice(firstLine.length).trim()
+      return {
+        toolName: name,
+        args: firstLine,
+        output: rest || firstLine,
+      }
+    }
   }
 
   return null
@@ -236,22 +265,38 @@ export function OpenResponsesChatPage() {
             />
           )}
 
-          {messages.map((msg) => (
-            <div key={msg.id} className="flex w-full">
-              {msg.role === "assistant" ? (
-                <AssistantMessage
-                  content={msg.content}
-                  isThought={msg.kind === "thought"}
-                  timestamp={msg.timestamp}
-                />
-              ) : (
-                <UserMessage
-                  content={msg.content}
-                  attachments={msg.attachments}
-                />
-              )}
-            </div>
-          ))}
+          {messages.map((msg) => {
+            const toolCall =
+              msg.role === "assistant" && msg.kind !== "thought"
+                ? detectToolCall(msg.content)
+                : null
+
+            return (
+              <div key={msg.id} className="flex w-full">
+                {msg.role === "assistant" ? (
+                  toolCall ? (
+                    <ToolCallMessage
+                      toolName={toolCall.toolName}
+                      args={toolCall.args}
+                      output={toolCall.output}
+                      timestamp={msg.timestamp}
+                    />
+                  ) : (
+                    <AssistantMessage
+                      content={msg.content}
+                      isThought={msg.kind === "thought"}
+                      timestamp={msg.timestamp}
+                    />
+                  )
+                ) : (
+                  <UserMessage
+                    content={msg.content}
+                    attachments={msg.attachments}
+                  />
+                )}
+              </div>
+            )
+          })}
 
           {isTyping && <TypingIndicator />}
         </div>

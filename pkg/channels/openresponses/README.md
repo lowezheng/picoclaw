@@ -64,7 +64,7 @@ curl -N -v -X POST http://localhost:18790/v1/responses \
   -H "Authorization: Bearer 570694ff7910121aaf9feea5f42e6263" \
   -H "Content-Type: application/json" \
   -d '{
-    "input": "今天天气是",
+    "input": "查询我管理的产品，产品代码：DD0108，组合代码：7000000 ",
     "stream": true
   }'
 ```
@@ -238,7 +238,7 @@ All items share these required fields: `id`, `type`, `status`.
   "content": [{ "type": "output_text", "text": "..." }],
   "encrypted_content": null,
   "summary": [{ "type": "summary_text", "text": "..." }]
-}
+}xu
 ```
 
 > Extension rule: New item types must be prefixed with the implementor slug, e.g. `openai:web_search_call`.

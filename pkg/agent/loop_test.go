@@ -3435,6 +3435,67 @@ func TestHandleReasoning(t *testing.T) {
 	})
 }
 
+func TestPublishOpenResponsesReasoning(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				Workspace:         tmpDir,
+				ModelName:         "test-model",
+				MaxTokens:         4096,
+				MaxToolIterations: 10,
+			},
+		},
+	}
+	msgBus := bus.NewMessageBus()
+	al := NewAgentLoop(cfg, msgBus, &mockProvider{})
+
+	al.publishOpenResponsesReasoning(context.Background(), "Let me think...", "conv_123")
+
+	msg, ok := <-msgBus.OutboundChan()
+	if !ok {
+		t.Fatal("expected an outbound message")
+	}
+	if msg.Channel != "openresponses" {
+		t.Fatalf("expected channel 'openresponses', got %s", msg.Channel)
+	}
+	if msg.ChatID != "conv_123" {
+		t.Fatalf("expected chatID 'conv_123', got %s", msg.ChatID)
+	}
+	if msg.Content != "Let me think..." {
+		t.Fatalf("expected content 'Let me think...', got %s", msg.Content)
+	}
+	if msg.Context.Raw[metadataKeyMessageKind] != messageKindThought {
+		t.Fatalf("expected message_kind '%s', got %s", messageKindThought, msg.Context.Raw[metadataKeyMessageKind])
+	}
+}
+
+func TestPublishOpenResponsesReasoning_SkipsEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				Workspace:         tmpDir,
+				ModelName:         "test-model",
+				MaxTokens:         4096,
+				MaxToolIterations: 10,
+			},
+		},
+	}
+	msgBus := bus.NewMessageBus()
+	al := NewAgentLoop(cfg, msgBus, &mockProvider{})
+
+	// Empty reasoning content should not publish anything.
+	al.publishOpenResponsesReasoning(context.Background(), "", "conv_123")
+
+	select {
+	case msg := <-msgBus.OutboundChan():
+		t.Fatalf("expected no message for empty content, got %+v", msg)
+	case <-time.After(200 * time.Millisecond):
+		// Expected: no message.
+	}
+}
+
 func TestProcessMessage_PublishesReasoningContentToReasoningChannel(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := &config.Config{

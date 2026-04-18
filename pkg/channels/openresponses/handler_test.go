@@ -587,3 +587,124 @@ func TestWriteSSEResponseStream(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteJSONResponseWithStream_Reasoning(t *testing.T) {
+	ch, _ := newTestChannel(t, "secret")
+	defer ch.Stop(context.Background())
+
+	stream := newPendingStream(10)
+	stream.push(streamEvent{kind: eventKindText, content: "Final answer"})
+	stream.push(streamEvent{kind: eventKindReasoning, content: "Let me reason..."})
+	stream.close()
+
+	rr := httptest.NewRecorder()
+	ch.writeJSONResponseWithStream(rr, stream, "resp_1", "msg_1", "conv_1", "")
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var resp Response
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if len(resp.Output) != 2 {
+		t.Fatalf("expected 2 output items, got %d", len(resp.Output))
+	}
+	if resp.Output[0].Type != "message" {
+		t.Errorf("expected first item type 'message', got %s", resp.Output[0].Type)
+	}
+	if resp.Output[0].Content[0].Text != "Final answer" {
+		t.Errorf("unexpected first content: %s", resp.Output[0].Content[0].Text)
+	}
+	if resp.Output[1].Type != "reasoning" {
+		t.Errorf("expected second item type 'reasoning', got %s", resp.Output[1].Type)
+	}
+	if resp.Output[1].Content[0].Type != "reasoning_text" {
+		t.Errorf("expected reasoning_text, got %s", resp.Output[1].Content[0].Type)
+	}
+	if resp.Output[1].Content[0].Text != "Let me reason..." {
+		t.Errorf("unexpected reasoning content: %s", resp.Output[1].Content[0].Text)
+	}
+}
+
+func TestWriteSSEResponseStream_Reasoning(t *testing.T) {
+	ch, _ := newTestChannel(t, "secret")
+	defer ch.Stop(context.Background())
+
+	stream := newPendingStream(10)
+	stream.push(streamEvent{kind: eventKindReasoning, content: "Thinking..."})
+	stream.close()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ch.writeSSEResponseStream(rr, req, stream, "resp_1", "msg_1", "conv_1", "")
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+
+	required := []string{
+		"event: response.in_progress",
+		"event: response.output_item.added",
+		"event: response.content_part.added",
+		"event: response.reasoning_text.delta",
+		"event: response.reasoning_text.done",
+		"event: response.content_part.done",
+		"event: response.output_item.done",
+		"event: response.completed",
+		"data: [DONE]",
+		"Thinking...",
+	}
+	for _, s := range required {
+		if !strings.Contains(body, s) {
+			t.Errorf("SSE response missing: %s", s)
+		}
+	}
+
+	// Verify output_item.added has type "reasoning".
+	var addedEventData string
+	lines := strings.Split(body, "\n")
+	for i := 0; i < len(lines); i++ {
+		if strings.Contains(lines[i], "event: response.output_item.added") && i+1 < len(lines) {
+			addedEventData = strings.TrimPrefix(lines[i+1], "data: ")
+			break
+		}
+	}
+	if addedEventData == "" {
+		t.Fatal("missing response.output_item.added event data")
+	}
+	var addedEvent ResponseEvent
+	if err := json.Unmarshal([]byte(addedEventData), &addedEvent); err != nil {
+		t.Fatalf("failed to unmarshal added event: %v", err)
+	}
+	if addedEvent.Item.Type != "reasoning" {
+		t.Errorf("expected output_item.added type 'reasoning', got %s", addedEvent.Item.Type)
+	}
+
+	// Verify output_item.done has type "reasoning" and reasoning_text content.
+	var doneEventData string
+	for i := 0; i < len(lines); i++ {
+		if strings.Contains(lines[i], "event: response.output_item.done") && i+1 < len(lines) {
+			doneEventData = strings.TrimPrefix(lines[i+1], "data: ")
+			break
+		}
+	}
+	if doneEventData == "" {
+		t.Fatal("missing response.output_item.done event data")
+	}
+	var doneEvent ResponseEvent
+	if err := json.Unmarshal([]byte(doneEventData), &doneEvent); err != nil {
+		t.Fatalf("failed to unmarshal done event: %v", err)
+	}
+	if doneEvent.Item.Type != "reasoning" {
+		t.Errorf("expected output_item.done type 'reasoning', got %s", doneEvent.Item.Type)
+	}
+	if len(doneEvent.Item.Content) != 1 || doneEvent.Item.Content[0].Type != "reasoning_text" {
+		t.Errorf("expected reasoning_text content, got %v", doneEvent.Item.Content)
+	}
+	if doneEvent.Item.Content[0].Text != "Thinking..." {
+		t.Errorf("expected 'Thinking...', got %s", doneEvent.Item.Content[0].Text)
+	}
+}

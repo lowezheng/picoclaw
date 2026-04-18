@@ -309,3 +309,86 @@ func TestSendMultipleMessages(t *testing.T) {
 		t.Errorf("unexpected contents: %v", contents)
 	}
 }
+
+func TestSend_ReasoningMessage(t *testing.T) {
+	msgBus := bus.NewMessageBus()
+	bc := &config.Channel{}
+	bc.SetName("openresponses")
+	cfg := &config.OpenResponsesSettings{
+		RequestTimeout: 5,
+	}
+
+	ch, _ := NewOpenResponsesChannel(bc, cfg, msgBus)
+	_ = ch.Start(context.Background())
+	defer ch.Stop(context.Background())
+
+	stream := newPendingStream(10)
+	ch.pendingMu.Lock()
+	ch.pending["req_test_reasoning"] = stream
+	ch.pendingMu.Unlock()
+
+	// Simulate a reasoning (thought) message from the agent.
+	ch.Send(context.Background(), bus.OutboundMessage{
+		Channel: "openresponses",
+		ChatID:  "conv_123\x00req_test_reasoning",
+		Content: "Let me think about this...",
+		Context: bus.InboundContext{Raw: map[string]string{"message_kind": "thought"}},
+	})
+
+	var ev streamEvent
+	select {
+	case ev = <-stream.events:
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for reasoning event")
+	}
+
+	if ev.kind != eventKindReasoning {
+		t.Fatalf("expected eventKindReasoning, got %v", ev.kind)
+	}
+	if ev.content != "Let me think about this..." {
+		t.Errorf("unexpected content: %q", ev.content)
+	}
+
+	stream.close()
+}
+
+func TestSend_TextMessage(t *testing.T) {
+	msgBus := bus.NewMessageBus()
+	bc := &config.Channel{}
+	bc.SetName("openresponses")
+	cfg := &config.OpenResponsesSettings{
+		RequestTimeout: 5,
+	}
+
+	ch, _ := NewOpenResponsesChannel(bc, cfg, msgBus)
+	_ = ch.Start(context.Background())
+	defer ch.Stop(context.Background())
+
+	stream := newPendingStream(10)
+	ch.pendingMu.Lock()
+	ch.pending["req_test_text"] = stream
+	ch.pendingMu.Unlock()
+
+	// Simulate a normal text message from the agent.
+	ch.Send(context.Background(), bus.OutboundMessage{
+		Channel: "openresponses",
+		ChatID:  "conv_123\x00req_test_text",
+		Content: "Hello world",
+	})
+
+	var ev streamEvent
+	select {
+	case ev = <-stream.events:
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for text event")
+	}
+
+	if ev.kind != eventKindText {
+		t.Fatalf("expected eventKindText, got %v", ev.kind)
+	}
+	if ev.content != "Hello world" {
+		t.Errorf("unexpected content: %q", ev.content)
+	}
+
+	stream.close()
+}

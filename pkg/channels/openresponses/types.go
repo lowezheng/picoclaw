@@ -84,9 +84,9 @@ type ResponseItem struct {
 	Arguments  string      `json:"arguments,omitempty"`
 }
 
-// Content is a polymorphic content block inside a message item.
+// Content is a polymorphic content block inside a message or reasoning item.
 type Content struct {
-	Type string `json:"type"` // "output_text"
+	Type string `json:"type"` // "output_text" | "reasoning_text"
 	Text string `json:"text,omitempty"`
 }
 
@@ -171,8 +171,9 @@ func normalizeInput(input any) string {
 type streamEventKind string
 
 const (
-	eventKindText    streamEventKind = "text"
-	eventKindTurnEnd streamEventKind = "turn_end"
+	eventKindText      streamEventKind = "text"
+	eventKindReasoning streamEventKind = "reasoning"
+	eventKindTurnEnd   streamEventKind = "turn_end"
 )
 
 // streamEvent represents one piece of agent output in the stream.
@@ -200,7 +201,13 @@ func newPendingStream(bufSize int) *pendingStream {
 }
 
 // push adds an event to the stream. Returns false if the stream is closed or full.
-func (s *pendingStream) push(ev streamEvent) bool {
+func (s *pendingStream) push(ev streamEvent) (ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			ok = false
+		}
+	}()
+
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()

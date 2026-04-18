@@ -124,17 +124,61 @@ func (c *OpenResponsesChannel) writeJSONResponseWithStream(
 	stream *pendingStream,
 	respID, msgID, conversationID, previousResponseID string,
 ) {
-	var parts []string
+	var outputItems []ResponseItem
+	msgSeq := 0
 
 	for ev := range stream.events {
-		if ev.kind == eventKindText && ev.content != "" {
-			parts = append(parts, ev.content)
+		switch ev.kind {
+		case eventKindText:
+			itemID := fmt.Sprintf("%s_%d", msgID, msgSeq)
+			msgSeq++
+			outputItems = append(outputItems, ResponseItem{
+				Type:   "message",
+				ID:     itemID,
+				Status: "completed",
+				Role:   "assistant",
+				Content: []Content{
+					{Type: "output_text", Text: ev.content},
+				},
+			})
+		case eventKindReasoning:
+			itemID := fmt.Sprintf("%s_%d", msgID, msgSeq)
+			msgSeq++
+			outputItems = append(outputItems, ResponseItem{
+				Type:   "reasoning",
+				ID:     itemID,
+				Status: "completed",
+				Content: []Content{
+					{Type: "reasoning_text", Text: ev.content},
+				},
+			})
 		}
 	}
 
-	content := strings.Join(parts, "\n")
-	resp := buildResponse(respID, msgID, conversationID, previousResponseID, content)
-	resp.Usage = Usage{InputTokens: 0, OutputTokens: 0}
+	resp := Response{
+		ID:                 respID,
+		Object:             "response",
+		CreatedAt:          nowUnix(),
+		Status:             "completed",
+		ConversationID:     conversationID,
+		PreviousResponseID: previousResponseID,
+		Usage:              Usage{InputTokens: 0, OutputTokens: 0},
+	}
+	if len(outputItems) > 0 {
+		resp.Output = outputItems
+	} else {
+		resp.Output = []ResponseItem{
+			{
+				Type:   "message",
+				ID:     msgID,
+				Status: "completed",
+				Role:   "assistant",
+				Content: []Content{
+					{Type: "output_text", Text: ""},
+				},
+			},
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -189,95 +233,180 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 	// Read stream events and emit SSE events.
 	msgSeq := 0
 	for ev := range stream.events {
-		if ev.kind != eventKindText || ev.content == "" {
+		if ev.kind == eventKindTurnEnd {
 			continue
 		}
 
 		itemID := fmt.Sprintf("%s_%d", msgID, msgSeq)
 		msgSeq++
 
-		// response.output_item.added — item starts with empty content per spec.
-		addedItem := ResponseItem{
-			Type:    "message",
-			ID:      itemID,
-			Status:  "in_progress",
-			Role:    "assistant",
-			Content: []Content{},
+		switch ev.kind {
+		case eventKindText:
+			// --- text item sequence ---
+			addedItem := ResponseItem{
+				Type:    "message",
+				ID:      itemID,
+				Status:  "in_progress",
+				Role:    "assistant",
+				Content: []Content{},
+			}
+			writeSSEEvent(w, "response.output_item.added", ResponseEvent{
+				Type:           "response.output_item.added",
+				SequenceNumber: seq,
+				OutputIndex:    len(outputItems),
+				Item:           addedItem,
+			})
+			seq++
+			flusher.Flush()
+
+			// response.content_part.added
+			writeSSEEvent(w, "response.content_part.added", ResponseEvent{
+				Type:           "response.content_part.added",
+				SequenceNumber: seq,
+				ItemID:         itemID,
+				OutputIndex:    len(outputItems),
+				ContentIndex:   0,
+				Part:           Content{Type: "output_text", Text: ""},
+			})
+			seq++
+			flusher.Flush()
+
+			// response.output_text.delta
+			writeSSEEvent(w, "response.output_text.delta", ResponseEvent{
+				Type:           "response.output_text.delta",
+				SequenceNumber: seq,
+				ItemID:         itemID,
+				OutputIndex:    len(outputItems),
+				ContentIndex:   0,
+				Delta:          ev.content,
+			})
+			seq++
+			flusher.Flush()
+
+			// response.output_text.done
+			writeSSEEvent(w, "response.output_text.done", ResponseEvent{
+				Type:           "response.output_text.done",
+				SequenceNumber: seq,
+				ItemID:         itemID,
+				OutputIndex:    len(outputItems),
+				ContentIndex:   0,
+			})
+			seq++
+			flusher.Flush()
+
+			// response.content_part.done
+			writeSSEEvent(w, "response.content_part.done", ResponseEvent{
+				Type:           "response.content_part.done",
+				SequenceNumber: seq,
+				ItemID:         itemID,
+				OutputIndex:    len(outputItems),
+				ContentIndex:   0,
+				Part:           Content{Type: "output_text", Text: ev.content},
+			})
+			seq++
+			flusher.Flush()
+
+			// response.output_item.done
+			doneItem := ResponseItem{
+				Type:    "message",
+				ID:      itemID,
+				Status:  "completed",
+				Role:    "assistant",
+				Content: []Content{{Type: "output_text", Text: ev.content}},
+			}
+			writeSSEEvent(w, "response.output_item.done", ResponseEvent{
+				Type:           "response.output_item.done",
+				SequenceNumber: seq,
+				OutputIndex:    len(outputItems),
+				Item:           doneItem,
+			})
+			seq++
+			flusher.Flush()
+
+			outputItems = append(outputItems, doneItem)
+
+		case eventKindReasoning:
+			// --- reasoning item sequence ---
+			addedItem := ResponseItem{
+				Type:    "reasoning",
+				ID:      itemID,
+				Status:  "in_progress",
+				Content: []Content{},
+			}
+			writeSSEEvent(w, "response.output_item.added", ResponseEvent{
+				Type:           "response.output_item.added",
+				SequenceNumber: seq,
+				OutputIndex:    len(outputItems),
+				Item:           addedItem,
+			})
+			seq++
+			flusher.Flush()
+
+			// response.content_part.added
+			writeSSEEvent(w, "response.content_part.added", ResponseEvent{
+				Type:           "response.content_part.added",
+				SequenceNumber: seq,
+				ItemID:         itemID,
+				OutputIndex:    len(outputItems),
+				ContentIndex:   0,
+				Part:           Content{Type: "reasoning_text", Text: ""},
+			})
+			seq++
+			flusher.Flush()
+
+			// response.reasoning_text.delta
+			writeSSEEvent(w, "response.reasoning_text.delta", ResponseEvent{
+				Type:           "response.reasoning_text.delta",
+				SequenceNumber: seq,
+				ItemID:         itemID,
+				OutputIndex:    len(outputItems),
+				ContentIndex:   0,
+				Delta:          ev.content,
+			})
+			seq++
+			flusher.Flush()
+
+			// response.reasoning_text.done
+			writeSSEEvent(w, "response.reasoning_text.done", ResponseEvent{
+				Type:           "response.reasoning_text.done",
+				SequenceNumber: seq,
+				ItemID:         itemID,
+				OutputIndex:    len(outputItems),
+				ContentIndex:   0,
+			})
+			seq++
+			flusher.Flush()
+
+			// response.content_part.done
+			writeSSEEvent(w, "response.content_part.done", ResponseEvent{
+				Type:           "response.content_part.done",
+				SequenceNumber: seq,
+				ItemID:         itemID,
+				OutputIndex:    len(outputItems),
+				ContentIndex:   0,
+				Part:           Content{Type: "reasoning_text", Text: ev.content},
+			})
+			seq++
+			flusher.Flush()
+
+			// response.output_item.done
+			doneItem := ResponseItem{
+				Type:    "reasoning",
+				ID:      itemID,
+				Status:  "completed",
+				Content: []Content{{Type: "reasoning_text", Text: ev.content}},
+			}
+			writeSSEEvent(w, "response.output_item.done", ResponseEvent{
+				Type:           "response.output_item.done",
+				SequenceNumber: seq,
+				OutputIndex:    len(outputItems),
+				Item:           doneItem,
+			})
+			seq++
+			flusher.Flush()
+
+			outputItems = append(outputItems, doneItem)
 		}
-		writeSSEEvent(w, "response.output_item.added", ResponseEvent{
-			Type:           "response.output_item.added",
-			SequenceNumber: seq,
-			OutputIndex:    len(outputItems),
-			Item:           addedItem,
-		})
-		seq++
-		flusher.Flush()
-
-		// response.content_part.added
-		writeSSEEvent(w, "response.content_part.added", ResponseEvent{
-			Type:           "response.content_part.added",
-			SequenceNumber: seq,
-			ItemID:         itemID,
-			OutputIndex:    len(outputItems),
-			ContentIndex:   0,
-			Part:           Content{Type: "output_text", Text: ""},
-		})
-		seq++
-		flusher.Flush()
-
-		// response.output_text.delta
-		writeSSEEvent(w, "response.output_text.delta", ResponseEvent{
-			Type:           "response.output_text.delta",
-			SequenceNumber: seq,
-			ItemID:         itemID,
-			OutputIndex:    len(outputItems),
-			ContentIndex:   0,
-			Delta:          ev.content,
-		})
-		seq++
-		flusher.Flush()
-
-		// response.output_text.done
-		writeSSEEvent(w, "response.output_text.done", ResponseEvent{
-			Type:           "response.output_text.done",
-			SequenceNumber: seq,
-			ItemID:         itemID,
-			OutputIndex:    len(outputItems),
-			ContentIndex:   0,
-		})
-		seq++
-		flusher.Flush()
-
-		// response.content_part.done
-		writeSSEEvent(w, "response.content_part.done", ResponseEvent{
-			Type:           "response.content_part.done",
-			SequenceNumber: seq,
-			ItemID:         itemID,
-			OutputIndex:    len(outputItems),
-			ContentIndex:   0,
-			Part:           Content{Type: "output_text", Text: ev.content},
-		})
-		seq++
-		flusher.Flush()
-
-		// response.output_item.done — full content revealed here per spec.
-		doneItem := ResponseItem{
-			Type:    "message",
-			ID:      itemID,
-			Status:  "completed",
-			Role:    "assistant",
-			Content: []Content{{Type: "output_text", Text: ev.content}},
-		}
-		writeSSEEvent(w, "response.output_item.done", ResponseEvent{
-			Type:           "response.output_item.done",
-			SequenceNumber: seq,
-			OutputIndex:    len(outputItems),
-			Item:           doneItem,
-		})
-		seq++
-		flusher.Flush()
-
-		outputItems = append(outputItems, doneItem)
 	}
 
 	// Final response.completed with accumulated output.

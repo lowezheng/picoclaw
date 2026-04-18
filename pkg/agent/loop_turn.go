@@ -601,6 +601,8 @@ turnLoop:
 		}
 		if ts.channel == "pico" {
 			go al.publishPicoReasoning(turnCtx, reasoningContent, ts.chatID)
+		} else if ts.channel == "openresponses" {
+			go al.publishOpenResponsesReasoning(turnCtx, reasoningContent, ts.chatID)
 		} else {
 			go al.handleReasoning(
 				turnCtx,

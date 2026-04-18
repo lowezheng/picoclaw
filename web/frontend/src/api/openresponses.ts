@@ -88,7 +88,7 @@ function parseSSEEventBlock(block: string): { event: string; data: string } | nu
 
 export async function sendOpenResponsesMessage(
   request: OpenResponsesChatRequest,
-  onStreamEvent?: (event: { type: string; outputIndex?: number; delta?: string }) => void,
+  onStreamEvent?: (event: { type: string; outputIndex?: number; delta?: string; itemType?: string }) => void,
 ): Promise<string> {
   const res = await launcherFetch("/api/openresponses/chat", {
     method: "POST",
@@ -151,21 +151,33 @@ export async function sendOpenResponsesMessage(
 
       if (parsedBlock.event === "response.output_item.added") {
         try {
-          const parsedJSON = JSON.parse(parsedBlock.data) as { output_index?: number }
+          const parsedJSON = JSON.parse(parsedBlock.data) as { output_index?: number; item?: { type?: string } }
           if (typeof parsedJSON.output_index === "number") {
-            onStreamEvent?.({ type: "item_added", outputIndex: parsedJSON.output_index })
+            onStreamEvent?.({
+              type: "item_added",
+              outputIndex: parsedJSON.output_index,
+              itemType: parsedJSON.item?.type,
+            })
           }
         } catch (err) {
           console.warn("Failed to parse SSE output_item.added JSON:", parsedBlock.data, err)
         }
-      } else if (parsedBlock.event === "response.output_text.delta") {
+      } else if (
+        parsedBlock.event === "response.output_text.delta" ||
+        parsedBlock.event === "response.reasoning_text.delta"
+      ) {
         try {
           const parsedJSON = JSON.parse(parsedBlock.data) as { output_index?: number; delta?: string }
           if (typeof parsedJSON.output_index === "number" && typeof parsedJSON.delta === "string") {
             // NOTE: OpenResponses channel sends the complete text in each
             // delta (not incremental chunks), so replace rather than append.
             outputTexts[parsedJSON.output_index] = parsedJSON.delta
-            onStreamEvent?.({ type: "delta", outputIndex: parsedJSON.output_index, delta: parsedJSON.delta })
+            onStreamEvent?.({
+              type: "delta",
+              outputIndex: parsedJSON.output_index,
+              delta: parsedJSON.delta,
+              itemType: parsedBlock.event === "response.reasoning_text.delta" ? "reasoning" : undefined,
+            })
           }
         } catch (err) {
           console.warn("Failed to parse SSE delta JSON:", parsedBlock.data, err)

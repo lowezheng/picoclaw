@@ -76,7 +76,7 @@ export async function sendOpenResponsesChatMessage({
 
     const assistantMessages = new Map<
       number,
-      { id: string; content: string }
+      { id: string; content: string; kind?: "thought" }
     >()
 
     await sendOpenResponsesMessage(
@@ -89,7 +89,8 @@ export async function sendOpenResponsesChatMessage({
         if (event.type === "item_added" && typeof event.outputIndex === "number") {
           if (!assistantMessages.has(event.outputIndex)) {
             const msgId = `resp-${Date.now()}-${event.outputIndex}`
-            assistantMessages.set(event.outputIndex, { id: msgId, content: "" })
+            const kind = event.itemType === "reasoning" ? "thought" : undefined
+            assistantMessages.set(event.outputIndex, { id: msgId, content: "", kind })
             updateOpenResponsesChatStore((prev) => ({
               messages: [
                 ...prev.messages,
@@ -97,6 +98,7 @@ export async function sendOpenResponsesChatMessage({
                   id: msgId,
                   role: "assistant",
                   content: "",
+                  kind,
                   timestamp: Date.now(),
                 },
               ],
@@ -107,7 +109,8 @@ export async function sendOpenResponsesChatMessage({
           let msg = assistantMessages.get(event.outputIndex)
           if (!msg) {
             const msgId = `resp-${Date.now()}-${event.outputIndex}`
-            msg = { id: msgId, content: event.delta }
+            const kind = event.itemType === "reasoning" ? "thought" : undefined
+            msg = { id: msgId, content: event.delta, kind }
             assistantMessages.set(event.outputIndex, msg)
           } else {
             msg.content = event.delta
@@ -128,6 +131,7 @@ export async function sendOpenResponsesChatMessage({
                   id: msg!.id,
                   role: "assistant",
                   content: msg!.content,
+                  kind: msg!.kind,
                   timestamp: Date.now(),
                 },
               ],
@@ -140,7 +144,7 @@ export async function sendOpenResponsesChatMessage({
     // Ensure final content is set for all created messages
     updateOpenResponsesChatStore((prev) => {
       let messages = prev.messages
-      for (const [, { id, content }] of assistantMessages) {
+      for (const [, { id, content, kind }] of assistantMessages) {
         const existing = messages.find((m) => m.id === id)
         const finalContent = content
         if (existing) {
@@ -154,6 +158,7 @@ export async function sendOpenResponsesChatMessage({
               id,
               role: "assistant",
               content: finalContent,
+              kind,
               timestamp: Date.now(),
             },
           ]

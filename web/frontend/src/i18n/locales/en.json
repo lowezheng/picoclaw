@@ -61,6 +61,7 @@
       "step4": "Almost there..."
     },
     "reasoningLabel": "Reasoning",
+    "toolCallLabel": "Tool: {{tool}}",
     "history": "History",
     "noHistory": "No chat history yet",
     "historyLoadFailed": "Failed to load chat history",
