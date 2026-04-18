@@ -1,11 +1,13 @@
 package openresponses
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -208,6 +210,14 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
+	// Extend write deadline on every flush so the 30s gateway WriteTimeout
+	// behaves like an idle timeout rather than a hard request limit.
+	rc := http.NewResponseController(w)
+	flushAndExtend := func() {
+		flusher.Flush()
+		rc.SetWriteDeadline(time.Now().Add(30 * time.Second))
+	}
+
 	seq := 0
 	var outputItems []ResponseItem
 
@@ -228,7 +238,29 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 		Response:       resp,
 	})
 	seq++
-	flusher.Flush()
+	flushAndExtend()
+
+	// Start heartbeat goroutine to prevent gateway/proxy idle timeout.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	heartbeatDone := make(chan struct{})
+	go func() {
+		defer close(heartbeatDone)
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				fmt.Fprintf(w, ": heartbeat-%s\n\n", time.Now().Format("15:04:05"))
+				flushAndExtend()
+			case <-ctx.Done():
+				return
+			case <-stream.done:
+				return
+			}
+		}
+	}()
 
 	// Read stream events and emit SSE events.
 	msgSeq := 0
@@ -257,7 +289,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 				Item:           addedItem,
 			})
 			seq++
-			flusher.Flush()
+			flushAndExtend()
 
 			// response.content_part.added
 			writeSSEEvent(w, "response.content_part.added", ResponseEvent{
@@ -269,7 +301,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 				Part:           Content{Type: "output_text", Text: ""},
 			})
 			seq++
-			flusher.Flush()
+			flushAndExtend()
 
 			// response.output_text.delta
 			writeSSEEvent(w, "response.output_text.delta", ResponseEvent{
@@ -281,7 +313,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 				Delta:          ev.content,
 			})
 			seq++
-			flusher.Flush()
+			flushAndExtend()
 
 			// response.output_text.done
 			writeSSEEvent(w, "response.output_text.done", ResponseEvent{
@@ -292,7 +324,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 				ContentIndex:   0,
 			})
 			seq++
-			flusher.Flush()
+			flushAndExtend()
 
 			// response.content_part.done
 			writeSSEEvent(w, "response.content_part.done", ResponseEvent{
@@ -304,7 +336,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 				Part:           Content{Type: "output_text", Text: ev.content},
 			})
 			seq++
-			flusher.Flush()
+			flushAndExtend()
 
 			// response.output_item.done
 			doneItem := ResponseItem{
@@ -321,7 +353,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 				Item:           doneItem,
 			})
 			seq++
-			flusher.Flush()
+			flushAndExtend()
 
 			outputItems = append(outputItems, doneItem)
 
@@ -340,7 +372,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 				Item:           addedItem,
 			})
 			seq++
-			flusher.Flush()
+			flushAndExtend()
 
 			// response.content_part.added
 			writeSSEEvent(w, "response.content_part.added", ResponseEvent{
@@ -352,7 +384,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 				Part:           Content{Type: "reasoning_text", Text: ""},
 			})
 			seq++
-			flusher.Flush()
+			flushAndExtend()
 
 			// response.reasoning_text.delta
 			writeSSEEvent(w, "response.reasoning_text.delta", ResponseEvent{
@@ -364,7 +396,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 				Delta:          ev.content,
 			})
 			seq++
-			flusher.Flush()
+			flushAndExtend()
 
 			// response.reasoning_text.done
 			writeSSEEvent(w, "response.reasoning_text.done", ResponseEvent{
@@ -375,7 +407,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 				ContentIndex:   0,
 			})
 			seq++
-			flusher.Flush()
+			flushAndExtend()
 
 			// response.content_part.done
 			writeSSEEvent(w, "response.content_part.done", ResponseEvent{
@@ -387,7 +419,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 				Part:           Content{Type: "reasoning_text", Text: ev.content},
 			})
 			seq++
-			flusher.Flush()
+			flushAndExtend()
 
 			// response.output_item.done
 			doneItem := ResponseItem{
@@ -403,11 +435,15 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 				Item:           doneItem,
 			})
 			seq++
-			flusher.Flush()
+			flushAndExtend()
 
 			outputItems = append(outputItems, doneItem)
 		}
 	}
+
+	// Wait for heartbeat to finish before sending final events.
+	cancel()
+	<-heartbeatDone
 
 	// Final response.completed with accumulated output.
 	resp.Status = "completed"
@@ -420,11 +456,11 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 		SequenceNumber: seq,
 		Response:       resp,
 	})
-	flusher.Flush()
+	flushAndExtend()
 
 	// Terminal marker.
 	fmt.Fprint(w, "data: [DONE]\n\n")
-	flusher.Flush()
+	flushAndExtend()
 }
 
 func buildResponse(respID, msgID, conversationID, previousResponseID, content string) Response {
