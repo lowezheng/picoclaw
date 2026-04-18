@@ -1,4 +1,6 @@
 import { IconPlus } from "@tabler/icons-react"
+import { SessionHistoryMenu } from "@/components/chat/session-history-menu"
+import { useSessionHistory } from "@/hooks/use-session-history"
 import { type ChangeEvent, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
@@ -123,12 +125,27 @@ export function OpenResponsesChatPage() {
     messages,
     connectionState,
     isTyping,
+    activeSessionId,
     sendMessage,
+    switchSession,
     newChat,
   } = useOpenResponsesChat()
 
   const { state: gwState } = useGateway()
   const isGatewayRunning = gwState === "running"
+
+  const {
+    sessions,
+    hasMore,
+    loadError,
+    loadErrorMessage,
+    observerRef,
+    loadSessions,
+    handleDeleteSession,
+  } = useSessionHistory({
+    activeSessionId,
+    onDeletedActiveSession: newChat,
+  })
 
   const inputDisabledReason = resolveChatInputDisabledReason({
     gatewayState: gwState,
@@ -255,6 +272,22 @@ export function OpenResponsesChatPage() {
           <IconPlus className="size-4" />
           <span className="hidden sm:inline">{t("chat.newChat")}</span>
         </Button>
+
+        <SessionHistoryMenu
+          sessions={sessions}
+          activeSessionId={activeSessionId}
+          hasMore={hasMore}
+          loadError={loadError}
+          loadErrorMessage={loadErrorMessage}
+          observerRef={observerRef}
+          onOpenChange={(open) => {
+            if (open) {
+              void loadSessions(true)
+            }
+          }}
+          onSwitchSession={switchSession}
+          onDeleteSession={handleDeleteSession}
+        />
       </PageHeader>
 
       <div

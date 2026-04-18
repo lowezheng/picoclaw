@@ -1,6 +1,8 @@
 import { toast } from "sonner"
 
 import { sendOpenResponsesMessage } from "@/api/openresponses"
+import { loadSessionMessages } from "@/features/chat/history"
+import i18n from "@/i18n"
 import { generateSessionId } from "@/features/chat/state"
 import {
   type ChatAttachment,
@@ -201,4 +203,24 @@ export function initializeOpenResponsesChatStore() {
 
 export function teardownOpenResponsesChatStore() {
   // No-op for now; no persistent connections to clean up
+}
+
+export async function switchOpenResponsesChatSession(sessionId: string) {
+  if (sessionId === activeSessionIdRef) {
+    return
+  }
+
+  try {
+    const historyMessages = await loadSessionMessages(sessionId)
+
+    setActiveSessionId(sessionId)
+    updateOpenResponsesChatStore({
+      messages: historyMessages,
+      isTyping: false,
+      connectionState: "idle",
+    })
+  } catch (error) {
+    console.error("Failed to load session history:", error)
+    toast.error(i18n.t("chat.historyOpenFailed"))
+  }
 }

@@ -3,6 +3,7 @@ import { useAtomValue } from "jotai"
 import {
   newOpenResponsesChatSession,
   sendOpenResponsesChatMessage,
+  switchOpenResponsesChatSession,
 } from "@/features/openresponses-chat/controller"
 import { openResponsesChatAtom } from "@/store/openresponses-chat"
 
@@ -16,6 +17,7 @@ export function useOpenResponsesChat() {
     isTyping,
     activeSessionId,
     sendMessage: sendOpenResponsesChatMessage,
+    switchSession: switchOpenResponsesChatSession,
     newChat: newOpenResponsesChatSession,
   }
 }
