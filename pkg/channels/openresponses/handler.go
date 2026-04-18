@@ -134,6 +134,7 @@ func (c *OpenResponsesChannel) writeJSONResponseWithStream(
 
 	content := strings.Join(parts, "\n")
 	resp := buildResponse(respID, msgID, conversationID, previousResponseID, content)
+	resp.Usage = Usage{InputTokens: 0, OutputTokens: 0}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -291,6 +292,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 
 	// Final response.completed with accumulated output.
 	resp.Status = "completed"
+	resp.Usage = Usage{InputTokens: 0, OutputTokens: 0}
 	if len(outputItems) > 0 {
 		resp.Output = outputItems
 	}
@@ -314,6 +316,7 @@ func buildResponse(respID, msgID, conversationID, previousResponseID, content st
 		Status:             "completed",
 		ConversationID:     conversationID,
 		PreviousResponseID: previousResponseID,
+		Usage:              Usage{InputTokens: 0, OutputTokens: 0},
 		Output: []ResponseItem{
 			{
 				Type:   "message",

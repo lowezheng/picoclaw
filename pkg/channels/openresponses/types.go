@@ -63,6 +63,13 @@ type Response struct {
 	Output         []ResponseItem `json:"output"`
 	ConversationID string         `json:"conversation_id,omitempty"`
 	PreviousResponseID string    `json:"previous_response_id,omitempty"`
+	Usage              Usage     `json:"usage"`
+}
+
+// Usage represents token consumption for a response.
+type Usage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
 }
 
 // ResponseItem is a polymorphic output item.

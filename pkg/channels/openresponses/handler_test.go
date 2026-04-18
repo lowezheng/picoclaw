@@ -478,6 +478,29 @@ func TestWriteJSONResponseWithStream(t *testing.T) {
 	}
 }
 
+func TestJSONResponseHasUsage(t *testing.T) {
+	ch, _ := newTestChannel(t, "secret")
+	defer ch.Stop(context.Background())
+
+	stream := newPendingStream(10)
+	stream.push(streamEvent{kind: eventKindText, content: "Hello"})
+	stream.close()
+
+	rr := httptest.NewRecorder()
+	ch.writeJSONResponseWithStream(rr, stream, "resp_1", "msg_1", "conv_1", "")
+
+	var resp Response
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if resp.Usage.InputTokens != 0 {
+		t.Errorf("expected input_tokens 0, got %d", resp.Usage.InputTokens)
+	}
+	if resp.Usage.OutputTokens != 0 {
+		t.Errorf("expected output_tokens 0, got %d", resp.Usage.OutputTokens)
+	}
+}
+
 func TestSSEOutputItemAddedHasEmptyContent(t *testing.T) {
 	ch, _ := newTestChannel(t, "secret")
 	defer ch.Stop(context.Background())
