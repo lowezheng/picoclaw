@@ -62,6 +62,10 @@ export async function setupOpenResponses(): Promise<OpenResponsesSetupResponse> 
 /**
  * Parse a single SSE event block (between double newlines).
  * Returns the event name and data payload.
+ *
+ * Supports:
+ *   - Standard events:   event: xxx \n data: xxx
+ *   - Terminal marker:   data: [DONE]
  */
 function parseSSEEventBlock(block: string): { event: string; data: string } | null {
   const lines = block.split("\n").map((l) => l.replace(/\r$/, ""))
@@ -77,6 +81,12 @@ function parseSSEEventBlock(block: string): { event: string; data: string } | nu
       }
       data += line.slice(6)
     }
+    // Comment lines (": ...") are intentionally ignored.
+  }
+
+  // Terminal marker without an explicit event name.
+  if (data.trim() === "[DONE]") {
+    return { event: "done", data: "" }
   }
 
   if (!event || !data.trim()) {
@@ -182,6 +192,8 @@ export async function sendOpenResponsesMessage(
         } catch (err) {
           console.warn("Failed to parse SSE delta JSON:", parsedBlock.data, err)
         }
+      } else if (parsedBlock.event === "done") {
+        // Terminal marker — stream ends here.
       } else if (parsedBlock.event === "response.completed") {
         onStreamEvent?.({ type: "completed", delta: outputTexts.join("\n\n") })
       }

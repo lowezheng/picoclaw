@@ -109,7 +109,7 @@ func (c *OpenResponsesChannel) handleCreateResponse(w http.ResponseWriter, r *ht
 		w.WriteHeader(http.StatusOK)
 
 		fmt.Fprintf(w, ": queue-%s\n\n", time.Now().Format("2006-01-02"))
-		fmt.Fprintf(w, "data: [DONE]\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
 		}
