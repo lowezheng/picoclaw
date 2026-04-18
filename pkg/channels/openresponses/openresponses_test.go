@@ -334,6 +334,9 @@ func TestStreamEventImageKind(t *testing.T) {
 	if ev.imageURL != "data:image/png;base64,abc123" {
 		t.Errorf("unexpected imageURL: %s", ev.imageURL)
 	}
+	if ev.caption != "a cat" {
+		t.Errorf("unexpected caption: %s", ev.caption)
+	}
 }
 
 func TestSend_TextMessage(t *testing.T) {
