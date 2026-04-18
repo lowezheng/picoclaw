@@ -105,29 +105,51 @@ func TestDispatchAndSend(t *testing.T) {
 	_ = ch.Start(context.Background())
 	defer ch.Stop(context.Background())
 
-	p, _, err := ch.dispatch(context.Background(), "conv_123", "Hello agent")
+	stream, _, err := ch.dispatch(context.Background(), "conv_123", "Hello agent")
 	if err != nil {
 		t.Fatalf("dispatch failed: %v", err)
 	}
 
-	// Simulate agent replying via the bus.
+	// Simulate agent sending multiple messages.
 	go func() {
-		// Small delay to mimic async processing.
 		time.Sleep(50 * time.Millisecond)
 		ch.Send(context.Background(), bus.OutboundMessage{
 			Channel: "openresponses",
 			ChatID:  "conv_123\x00" + extractReqIDFromPending(ch, "conv_123"),
-			Content: "Hello user",
+			Content: "Message 1",
+		})
+		time.Sleep(20 * time.Millisecond)
+		ch.Send(context.Background(), bus.OutboundMessage{
+			Channel: "openresponses",
+			ChatID:  "conv_123\x00" + extractReqIDFromPending(ch, "conv_123"),
+			Content: "Message 2",
 		})
 	}()
 
-	select {
-	case <-p.done:
-		if p.content != "Hello user" {
-			t.Errorf("expected content 'Hello user', got %q", p.content)
+	var contents []string
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for ev := range stream.events {
+			if ev.kind == eventKindText {
+				contents = append(contents, ev.content)
+			}
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for response")
+	}()
+
+	select {
+	case <-done:
+		if len(contents) != 2 {
+			t.Fatalf("expected 2 messages, got %d", len(contents))
+		}
+		if contents[0] != "Message 1" {
+			t.Errorf("expected first message 'Message 1', got %q", contents[0])
+		}
+		if contents[1] != "Message 2" {
+			t.Errorf("expected second message 'Message 2', got %q", contents[1])
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for stream messages")
 	}
 }
 
@@ -143,18 +165,21 @@ func TestPendingTimeout(t *testing.T) {
 	_ = ch.Start(context.Background())
 	defer ch.Stop(context.Background())
 
-	p, _, err := ch.dispatch(context.Background(), "conv_timeout", "test")
+	stream, _, err := ch.dispatch(context.Background(), "conv_timeout", "test")
 	if err != nil {
 		t.Fatalf("dispatch failed: %v", err)
 	}
 
 	select {
-	case <-p.done:
-		if p.content != "" {
-			t.Errorf("expected empty content on timeout, got %q", p.content)
-		}
+	case <-stream.done:
+		// Timeout should have closed the stream.
 	case <-time.After(3 * time.Second):
 		t.Fatal("timeout waiting for pending timeout")
+	}
+
+	// After timeout, the stream should be closed and events drained.
+	if _, ok := <-stream.events; ok {
+		t.Error("expected events channel to be closed after timeout")
 	}
 }
 
@@ -225,4 +250,53 @@ func extractReqIDFromPending(ch *OpenResponsesChannel, convID string) string {
 		return reqID
 	}
 	return ""
+}
+
+func TestSendMultipleMessages(t *testing.T) {
+	msgBus := bus.NewMessageBus()
+	bc := &config.Channel{}
+	bc.SetName("openresponses")
+	cfg := &config.OpenResponsesSettings{
+		RequestTimeout: 5,
+	}
+
+	ch, _ := NewOpenResponsesChannel(bc, cfg, msgBus)
+	_ = ch.Start(context.Background())
+	defer ch.Stop(context.Background())
+
+	stream := newPendingStream(10)
+	ch.pendingMu.Lock()
+	ch.pending["req_test_multi"] = stream
+	ch.pendingMu.Unlock()
+
+	// Push multiple messages.
+	ch.Send(context.Background(), bus.OutboundMessage{
+		Channel: "openresponses",
+		ChatID:  "conv_123\x00req_test_multi",
+		Content: "First",
+	})
+	ch.Send(context.Background(), bus.OutboundMessage{
+		Channel: "openresponses",
+		ChatID:  "conv_123\x00req_test_multi",
+		Content: "Second",
+	})
+	ch.Send(context.Background(), bus.OutboundMessage{
+		Channel: "openresponses",
+		ChatID:  "conv_123\x00req_test_multi",
+		Content: "Third",
+	})
+
+	var contents []string
+	for ev := range stream.events {
+		if ev.kind == eventKindText {
+			contents = append(contents, ev.content)
+		}
+	}
+
+	if len(contents) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(contents))
+	}
+	if contents[0] != "First" || contents[1] != "Second" || contents[2] != "Third" {
+		t.Errorf("unexpected contents: %v", contents)
+	}
 }
