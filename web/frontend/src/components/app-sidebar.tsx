@@ -99,6 +99,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             icon: IconMessageCircle,
             translateTitle: true,
           },
+          {
+            title: "navigation.openresponsesChat",
+            url: "/openresponses-chat",
+            icon: IconMessageCircle,
+            translateTitle: true,
+          },
         ],
       },
       {

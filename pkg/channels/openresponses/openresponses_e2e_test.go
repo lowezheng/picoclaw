@@ -15,9 +15,9 @@ import (
 )
 
 const (
-	e2eURL        = "http://localhost:18790/v1/responses"
-	e2eToken      = "570694ff7910121aaf9feea5f42e6263"
-	e2eTimeout    = 60 * time.Second
+	e2eURL     = "http://localhost:18790/v1/responses"
+	e2eToken   = "570694ff7910121aaf9feea5f42e6263"
+	e2eTimeout = 60 * time.Second
 )
 
 // e2eConfig is the fixed endpoint configuration.
@@ -220,9 +220,9 @@ func TestE2E_SSEStream(t *testing.T) {
 	// Debug: log received events.
 	for i, ev := range events {
 		preview := ev.data
-		if len(preview) > 120 {
-			preview = preview[:120] + "..."
-		}
+		//if len(preview) > 120 {
+		//	preview = preview[:120] + "..."
+		//}
 		t.Logf("SSE event[%d]: %s | data: %s", i, ev.event, preview)
 	}
 

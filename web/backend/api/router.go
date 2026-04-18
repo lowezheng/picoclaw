@@ -71,6 +71,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Pico Channel (WebSocket chat)
 	h.registerPicoRoutes(mux)
 
+	// OpenResponses Channel (HTTP chat)
+	h.registerOpenResponsesRoutes(mux)
+
 	// Gateway process lifecycle
 	h.registerGatewayRoutes(mux)
 

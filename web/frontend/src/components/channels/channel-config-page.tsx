@@ -153,6 +153,8 @@ function isConfigured(
       return asBool(config.use_native)
     case "pico":
       return hasValue("token")
+    case "openresponses":
+      return hasValue("token")
     case "maixcam":
       return hasValue("host")
     case "matrix":
@@ -191,6 +193,8 @@ function getRequiredFieldKeys(channelName: string): string[] {
     case "whatsapp":
       return ["bridge_url"]
     case "pico":
+      return ["token"]
+    case "openresponses":
       return ["token"]
     case "maixcam":
       return ["host"]

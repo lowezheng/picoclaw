@@ -38,6 +38,7 @@ var gateway = struct {
 	logs                *LogBuffer
 	pidData             *ppid.PidFileData // pid file data read from picoclaw.pid.json
 	picoToken           string            // cached pico token from config (for proxy auth validation)
+	openResponsesToken  string            // cached openresponses token from config (for proxy auth validation)
 }{
 	runtimeStatus: "stopped",
 	logs:          NewLogBuffer(200),
@@ -76,6 +77,49 @@ func refreshPicoTokensLocked(configPath string) {
 		}
 	}
 	gateway.picoToken = picoCfg.Token.String()
+}
+
+// refreshOpenResponsesToken updates gateway.openResponsesToken from cfg
+func refreshOpenResponsesToken(cfg *config.Config) {
+	gateway.mu.Lock()
+	defer gateway.mu.Unlock()
+	var orCfg config.OpenResponsesSettings
+	if bc := cfg.Channels.GetByType(config.ChannelOpenResponses); bc != nil {
+		decoded, err := bc.GetDecoded()
+		if err == nil && decoded != nil {
+			if p, ok := decoded.(*config.OpenResponsesSettings); ok {
+				orCfg = *p
+			}
+		}
+	}
+	gateway.openResponsesToken = orCfg.Token.String()
+}
+
+// refreshOpenResponsesTokensLocked reads the openresponses token from config and caches it.
+// Caller must hold gateway.mu (or be sole writer).
+func refreshOpenResponsesTokensLocked(configPath string) {
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		return
+	}
+	var orCfg config.OpenResponsesSettings
+	if bc := cfg.Channels.GetByType(config.ChannelOpenResponses); bc != nil {
+		decoded, err := bc.GetDecoded()
+		if err == nil && decoded != nil {
+			if p, ok := decoded.(*config.OpenResponsesSettings); ok {
+				orCfg = *p
+			}
+		}
+	}
+	gateway.openResponsesToken = orCfg.Token.String()
+}
+
+// ensureOpenResponsesTokenCachedLocked lazily fills the in-memory openresponses token cache.
+func ensureOpenResponsesTokenCachedLocked(configPath string) {
+	if gateway.openResponsesToken != "" {
+		return
+	}
+	refreshOpenResponsesTokensLocked(configPath)
 }
 
 // ensurePicoTokenCachedLocked lazily fills the in-memory pico token cache when

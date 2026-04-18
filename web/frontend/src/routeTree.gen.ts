@@ -16,6 +16,7 @@ import { Route as LauncherLoginRouteImport } from './routes/launcher-login'
 import { Route as CredentialsRouteImport } from './routes/credentials'
 import { Route as ConfigRouteImport } from './routes/config'
 import { Route as AgentRouteImport } from './routes/agent'
+import { Route as OpenresponsesChatRouteRouteImport } from './routes/openresponses-chat/route'
 import { Route as ChannelsRouteRouteImport } from './routes/channels/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ConfigRawRouteImport } from './routes/config.raw'
@@ -59,6 +60,11 @@ const AgentRoute = AgentRouteImport.update({
   path: '/agent',
   getParentRoute: () => rootRouteImport,
 } as any)
+const OpenresponsesChatRouteRoute = OpenresponsesChatRouteRouteImport.update({
+  id: '/openresponses-chat',
+  path: '/openresponses-chat',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ChannelsRouteRoute = ChannelsRouteRouteImport.update({
   id: '/channels',
   path: '/channels',
@@ -98,6 +104,7 @@ const AgentHubRoute = AgentHubRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/channels': typeof ChannelsRouteRouteWithChildren
+  '/openresponses-chat': typeof OpenresponsesChatRouteRoute
   '/agent': typeof AgentRouteWithChildren
   '/config': typeof ConfigRouteWithChildren
   '/credentials': typeof CredentialsRoute
@@ -114,6 +121,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/channels': typeof ChannelsRouteRouteWithChildren
+  '/openresponses-chat': typeof OpenresponsesChatRouteRoute
   '/agent': typeof AgentRouteWithChildren
   '/config': typeof ConfigRouteWithChildren
   '/credentials': typeof CredentialsRoute
@@ -131,6 +139,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/channels': typeof ChannelsRouteRouteWithChildren
+  '/openresponses-chat': typeof OpenresponsesChatRouteRoute
   '/agent': typeof AgentRouteWithChildren
   '/config': typeof ConfigRouteWithChildren
   '/credentials': typeof CredentialsRoute
@@ -149,6 +158,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/channels'
+    | '/openresponses-chat'
     | '/agent'
     | '/config'
     | '/credentials'
@@ -165,6 +175,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/channels'
+    | '/openresponses-chat'
     | '/agent'
     | '/config'
     | '/credentials'
@@ -181,6 +192,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/channels'
+    | '/openresponses-chat'
     | '/agent'
     | '/config'
     | '/credentials'
@@ -198,6 +210,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ChannelsRouteRoute: typeof ChannelsRouteRouteWithChildren
+  OpenresponsesChatRouteRoute: typeof OpenresponsesChatRouteRoute
   AgentRoute: typeof AgentRouteWithChildren
   ConfigRoute: typeof ConfigRouteWithChildren
   CredentialsRoute: typeof CredentialsRoute
@@ -256,6 +269,13 @@ declare module '@tanstack/react-router' {
       path: '/agent'
       fullPath: '/agent'
       preLoaderRoute: typeof AgentRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/openresponses-chat': {
+      id: '/openresponses-chat'
+      path: '/openresponses-chat'
+      fullPath: '/openresponses-chat'
+      preLoaderRoute: typeof OpenresponsesChatRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/channels': {
@@ -350,6 +370,7 @@ const ConfigRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ChannelsRouteRoute: ChannelsRouteRouteWithChildren,
+  OpenresponsesChatRouteRoute: OpenresponsesChatRouteRoute,
   AgentRoute: AgentRouteWithChildren,
   ConfigRoute: ConfigRouteWithChildren,
   CredentialsRoute: CredentialsRoute,

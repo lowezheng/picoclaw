@@ -1,6 +1,7 @@
 {
   "navigation": {
     "chat": "Chat",
+    "openresponsesChat": "OpenResponses Chat",
     "model_group": "Models",
     "models": "Models",
     "credentials": "Credentials",
