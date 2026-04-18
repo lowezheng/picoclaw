@@ -1,13 +1,11 @@
 package openresponses
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -179,28 +177,6 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 	seq++
 	flusher.Flush()
 
-	// Start heartbeat goroutine.
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-
-	heartbeatDone := make(chan struct{})
-	go func() {
-		defer close(heartbeatDone)
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				fmt.Fprint(w, ": heartbeat\n\n")
-				flusher.Flush()
-			case <-ctx.Done():
-				return
-			case <-stream.done:
-				return
-			}
-		}
-	}()
-
 	// Read stream events and emit SSE events.
 	msgSeq := 0
 	for ev := range stream.events {
@@ -286,10 +262,6 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 
 		outputItems = append(outputItems, item)
 	}
-
-	// Wait for heartbeat to finish.
-	cancel()
-	<-heartbeatDone
 
 	// Final response.completed with accumulated output.
 	if len(outputItems) > 0 {

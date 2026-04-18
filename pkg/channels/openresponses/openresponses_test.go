@@ -271,7 +271,7 @@ func TestSendMultipleMessages(t *testing.T) {
 	_ = ch.Start(context.Background())
 	defer ch.Stop(context.Background())
 
-	stream := newPendingStream(10)
+	stream := newPendingStream(10, 100*time.Millisecond)
 	ch.pendingMu.Lock()
 	ch.pending["req_test_multi"] = stream
 	ch.pendingMu.Unlock()
