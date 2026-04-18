@@ -167,10 +167,28 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 	seq := 0
 	var outputItems []ResponseItem
 
-	// 1. response.created
-	resp := buildResponse(respID, msgID, conversationID, previousResponseID, "")
+	// 1. response.created — start with empty output so the client builds the
+	// message list purely from output_item.added events.
+	resp := Response{
+		ID:                 respID,
+		Object:             "response",
+		CreatedAt:          nowUnix(),
+		Status:             "in_progress",
+		ConversationID:     conversationID,
+		PreviousResponseID: previousResponseID,
+		Output:             []ResponseItem{},
+	}
 	writeSSEEvent(w, "response.created", ResponseEvent{
 		Type:           "response.created",
+		SequenceNumber: seq,
+		Response:       resp,
+	})
+	seq++
+	flusher.Flush()
+
+	// 2. response.in_progress
+	writeSSEEvent(w, "response.in_progress", ResponseEvent{
+		Type:           "response.in_progress",
 		SequenceNumber: seq,
 		Response:       resp,
 	})
@@ -190,7 +208,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 		item := ResponseItem{
 			Type:    "message",
 			ID:      itemID,
-			Status:  "completed",
+			Status:  "in_progress",
 			Role:    "assistant",
 			Content: []Content{{Type: "output_text", Text: ev.content}},
 		}
@@ -212,6 +230,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			ItemID:         itemID,
 			OutputIndex:    len(outputItems),
 			ContentIndex:   0,
+			Part:           Content{Type: "output_text", Text: ""},
 		})
 		seq++
 		flusher.Flush()
@@ -246,11 +265,13 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			ItemID:         itemID,
 			OutputIndex:    len(outputItems),
 			ContentIndex:   0,
+			Part:           Content{Type: "output_text", Text: ev.content},
 		})
 		seq++
 		flusher.Flush()
 
 		// response.output_item.done
+		item.Status = "completed"
 		writeSSEEvent(w, "response.output_item.done", ResponseEvent{
 			Type:           "response.output_item.done",
 			SequenceNumber: seq,
@@ -264,6 +285,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 	}
 
 	// Final response.completed with accumulated output.
+	resp.Status = "completed"
 	if len(outputItems) > 0 {
 		resp.Output = outputItems
 	}

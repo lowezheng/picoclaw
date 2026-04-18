@@ -130,14 +130,13 @@ export function OpenResponsesChatPage() {
     }
   }, [messages, isTyping, isAtBottom])
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if ((!input.trim() && attachments.length === 0) || !canInput) return
-    if (
-      sendMessage({
-        content: input,
-        attachments,
-      })
-    ) {
+    const success = await sendMessage({
+      content: input,
+      attachments,
+    })
+    if (success) {
       setInput("")
       setAttachments([])
     }
@@ -232,7 +231,7 @@ export function OpenResponsesChatPage() {
           {messages.length === 0 && !isTyping && (
             <ChatEmptyState
               hasAvailableModels={isGatewayRunning}
-              defaultModelName={isGatewayRunning ? "OpenResponses" : undefined}
+              defaultModelName={isGatewayRunning ? "OpenResponses" : ""}
               isConnected={isGatewayRunning}
             />
           )}

@@ -1,11 +1,7 @@
 import { toast } from "sonner"
 
 import { sendOpenResponsesMessage } from "@/api/openresponses"
-import {
-  generateSessionId,
-  writeStoredSessionId,
-} from "@/features/chat/state"
-import i18n from "@/i18n"
+import { generateSessionId } from "@/features/chat/state"
 import {
   type ChatAttachment,
   getOpenResponsesChatState,
@@ -78,29 +74,50 @@ export async function sendOpenResponsesChatMessage({
 
     const input = buildInputFromHistory(history)
 
-    const assistantMsgId = `resp-${Date.now()}`
-    let assistantContent = ""
+    const assistantMessages = new Map<
+      number,
+      { id: string; content: string }
+    >()
 
-    const fullText = await sendOpenResponsesMessage(
+    await sendOpenResponsesMessage(
       {
         input,
         conversation_id: sessionId,
         stream: true,
       },
       (event) => {
-        if (event.type === "delta" && event.delta) {
+        if (event.type === "item_added" && typeof event.outputIndex === "number") {
+          if (!assistantMessages.has(event.outputIndex)) {
+            const msgId = `resp-${Date.now()}-${event.outputIndex}`
+            assistantMessages.set(event.outputIndex, { id: msgId, content: "" })
+            updateOpenResponsesChatStore((prev) => ({
+              messages: [
+                ...prev.messages,
+                {
+                  id: msgId,
+                  role: "assistant",
+                  content: "",
+                  timestamp: Date.now(),
+                },
+              ],
+            }))
+          }
+        } else if (event.type === "delta" && typeof event.outputIndex === "number" && event.delta) {
           // Delta contains the complete text (not incremental chunks).
-          assistantContent = event.delta
+          let msg = assistantMessages.get(event.outputIndex)
+          if (!msg) {
+            const msgId = `resp-${Date.now()}-${event.outputIndex}`
+            msg = { id: msgId, content: event.delta }
+            assistantMessages.set(event.outputIndex, msg)
+          } else {
+            msg.content = event.delta
+          }
           updateOpenResponsesChatStore((prev) => {
-            const existing = prev.messages.find(
-              (m) => m.id === assistantMsgId,
-            )
+            const existing = prev.messages.find((m) => m.id === msg!.id)
             if (existing) {
               return {
                 messages: prev.messages.map((m) =>
-                  m.id === assistantMsgId
-                    ? { ...m, content: assistantContent }
-                    : m,
+                  m.id === msg!.id ? { ...m, content: msg!.content } : m,
                 ),
               }
             }
@@ -108,9 +125,9 @@ export async function sendOpenResponsesChatMessage({
               messages: [
                 ...prev.messages,
                 {
-                  id: assistantMsgId,
+                  id: msg!.id,
                   role: "assistant",
-                  content: assistantContent,
+                  content: msg!.content,
                   timestamp: Date.now(),
                 },
               ],
@@ -120,31 +137,30 @@ export async function sendOpenResponsesChatMessage({
       },
     )
 
-    // Ensure final content is set
+    // Ensure final content is set for all created messages
     updateOpenResponsesChatStore((prev) => {
-      const existing = prev.messages.find((m) => m.id === assistantMsgId)
-      const finalContent = fullText || assistantContent
-      if (existing) {
-        return {
-          messages: prev.messages.map((m) =>
-            m.id === assistantMsgId
-              ? { ...m, content: finalContent }
-              : m,
-          ),
-          isTyping: false,
-          connectionState: "idle",
+      let messages = prev.messages
+      for (const [, { id, content }] of assistantMessages) {
+        const existing = messages.find((m) => m.id === id)
+        const finalContent = content
+        if (existing) {
+          messages = messages.map((m) =>
+            m.id === id ? { ...m, content: finalContent } : m,
+          )
+        } else {
+          messages = [
+            ...messages,
+            {
+              id,
+              role: "assistant",
+              content: finalContent,
+              timestamp: Date.now(),
+            },
+          ]
         }
       }
       return {
-        messages: [
-          ...prev.messages,
-          {
-            id: assistantMsgId,
-            role: "assistant",
-            content: finalContent,
-            timestamp: Date.now(),
-          },
-        ],
+        messages,
         isTyping: false,
         connectionState: "idle",
       }

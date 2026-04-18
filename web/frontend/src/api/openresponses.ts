@@ -88,7 +88,7 @@ function parseSSEEventBlock(block: string): { event: string; data: string } | nu
 
 export async function sendOpenResponsesMessage(
   request: OpenResponsesChatRequest,
-  onStreamEvent?: (event: { type: string; delta?: string }) => void,
+  onStreamEvent?: (event: { type: string; outputIndex?: number; delta?: string }) => void,
 ): Promise<string> {
   const res = await launcherFetch("/api/openresponses/chat", {
     method: "POST",
@@ -129,7 +129,7 @@ export async function sendOpenResponsesMessage(
 
   const decoder = new TextDecoder()
   let buffer = ""
-  let fullText = ""
+  const outputTexts: string[] = []
 
   while (true) {
     const { done, value } = await reader.read()
@@ -149,25 +149,34 @@ export async function sendOpenResponsesMessage(
       const parsedBlock = parseSSEEventBlock(trimmed)
       if (!parsedBlock) continue
 
-      if (parsedBlock.event === "response.output_text.delta") {
+      if (parsedBlock.event === "response.output_item.added") {
         try {
-          const parsedJSON = JSON.parse(parsedBlock.data) as { delta?: string }
-          if (typeof parsedJSON.delta === "string") {
+          const parsedJSON = JSON.parse(parsedBlock.data) as { output_index?: number }
+          if (typeof parsedJSON.output_index === "number") {
+            onStreamEvent?.({ type: "item_added", outputIndex: parsedJSON.output_index })
+          }
+        } catch (err) {
+          console.warn("Failed to parse SSE output_item.added JSON:", parsedBlock.data, err)
+        }
+      } else if (parsedBlock.event === "response.output_text.delta") {
+        try {
+          const parsedJSON = JSON.parse(parsedBlock.data) as { output_index?: number; delta?: string }
+          if (typeof parsedJSON.output_index === "number" && typeof parsedJSON.delta === "string") {
             // NOTE: OpenResponses channel sends the complete text in each
             // delta (not incremental chunks), so replace rather than append.
-            fullText = parsedJSON.delta
-            onStreamEvent?.({ type: "delta", delta: parsedJSON.delta })
+            outputTexts[parsedJSON.output_index] = parsedJSON.delta
+            onStreamEvent?.({ type: "delta", outputIndex: parsedJSON.output_index, delta: parsedJSON.delta })
           }
         } catch (err) {
           console.warn("Failed to parse SSE delta JSON:", parsedBlock.data, err)
         }
       } else if (parsedBlock.event === "response.completed") {
-        onStreamEvent?.({ type: "completed", delta: fullText })
+        onStreamEvent?.({ type: "completed", delta: outputTexts.join("\n\n") })
       }
     }
   }
 
-  return fullText
+  return outputTexts.join("\n\n")
 }
 
 export type { OpenResponsesTokenResponse, OpenResponsesSetupResponse, OpenResponsesChatRequest }

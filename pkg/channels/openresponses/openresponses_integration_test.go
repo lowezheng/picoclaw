@@ -206,6 +206,7 @@ func TestIntegration_SSEStreamEvents(t *testing.T) {
 	// Expected event sequence per README.
 	expectedEvents := []string{
 		"response.created",
+		"response.in_progress",
 		"response.output_item.added",
 		"response.content_part.added",
 		"response.output_text.delta",

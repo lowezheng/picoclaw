@@ -95,6 +95,7 @@ type ResponseEvent struct {
 	OutputIndex    int           `json:"output_index,omitempty"`
 	ContentIndex   int           `json:"content_index,omitempty"`
 	Delta          string        `json:"delta,omitempty"`
+	Part           Content       `json:"part,omitempty"`
 }
 
 // --- Internal Helpers ---
