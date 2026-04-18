@@ -75,10 +75,6 @@ function resolveChatInputDisabledReason({
     return "gatewayError"
   }
 
-  if (connectionState === "sending") {
-    return "websocketConnecting"
-  }
-
   if (connectionState === "error") {
     return "websocketError"
   }
@@ -160,14 +156,24 @@ export function OpenResponsesChatPage() {
   }, [messages, isTyping, isAtBottom])
 
   const handleSend = async () => {
-    if ((!input.trim() && attachments.length === 0) || !canInput) return
+    if (
+      (!input.trim() && attachments.length === 0) ||
+      !canInput ||
+      connectionState === "sending"
+    ) {
+      return
+    }
+    const content = input
+    const currentAttachments = attachments
+    setInput("")
+    setAttachments([])
     const success = await sendMessage({
-      content: input,
-      attachments,
+      content,
+      attachments: currentAttachments,
     })
-    if (success) {
-      setInput("")
-      setAttachments([])
+    if (!success) {
+      setInput(content)
+      setAttachments(currentAttachments)
     }
   }
 
@@ -230,7 +236,9 @@ export function OpenResponsesChatPage() {
   }
 
   const canSubmit =
-    canInput && (Boolean(input.trim()) || attachments.length > 0)
+    canInput &&
+    connectionState !== "sending" &&
+    (Boolean(input.trim()) || attachments.length > 0)
 
   return (
     <div className="bg-background/95 flex h-full flex-col">

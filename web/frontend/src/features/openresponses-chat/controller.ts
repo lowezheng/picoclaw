@@ -37,6 +37,10 @@ export async function sendOpenResponsesChatMessage({
   content,
   attachments = [],
 }: SendChatMessageInput): Promise<boolean> {
+  if (getOpenResponsesChatState().connectionState === "sending") {
+    return false
+  }
+
   const normalizedContent = content.trim()
   const normalizedAttachments = attachments.filter(
     (a) => a.type === "image" && a.url,

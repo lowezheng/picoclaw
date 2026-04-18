@@ -121,17 +121,15 @@ export function ChatComposer({
             </Button>
           </div>
 
-          {canInput ? (
-            <Button
-              type="button"
-              size="icon"
-              className="size-8 rounded-full bg-violet-500 text-white transition-transform hover:bg-violet-600 active:scale-95"
-              onClick={onSend}
-              disabled={!canSend}
-            >
-              <IconArrowUp className="size-4" />
-            </Button>
-          ) : null}
+          <Button
+            type="button"
+            size="icon"
+            className="size-8 rounded-full bg-violet-500 text-white transition-transform hover:bg-violet-600 active:scale-95"
+            onClick={onSend}
+            disabled={!canSend}
+          >
+            <IconArrowUp className="size-4" />
+          </Button>
         </div>
       </div>
     </div>
