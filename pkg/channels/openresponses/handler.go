@@ -167,8 +167,6 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 	seq := 0
 	var outputItems []ResponseItem
 
-	// 1. response.created — start with empty output so the client builds the
-	// message list purely from output_item.added events.
 	resp := Response{
 		ID:                 respID,
 		Object:             "response",
@@ -178,15 +176,8 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 		PreviousResponseID: previousResponseID,
 		Output:             []ResponseItem{},
 	}
-	writeSSEEvent(w, "response.created", ResponseEvent{
-		Type:           "response.created",
-		SequenceNumber: seq,
-		Response:       resp,
-	})
-	seq++
-	flusher.Flush()
 
-	// 2. response.in_progress
+	// response.in_progress
 	writeSSEEvent(w, "response.in_progress", ResponseEvent{
 		Type:           "response.in_progress",
 		SequenceNumber: seq,

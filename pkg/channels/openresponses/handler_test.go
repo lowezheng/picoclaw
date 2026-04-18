@@ -190,8 +190,8 @@ func TestServeHTTPSSEStream(t *testing.T) {
 	}
 
 	bodyStr := rr.Body.String()
-	if !strings.Contains(bodyStr, "event: response.created") {
-		t.Error("missing response.created event")
+	if !strings.Contains(bodyStr, "event: response.in_progress") {
+		t.Error("missing response.in_progress event")
 	}
 	if !strings.Contains(bodyStr, "event: response.completed") {
 		t.Error("missing response.completed event")
@@ -572,7 +572,7 @@ func TestWriteSSEResponseStream(t *testing.T) {
 	}
 	body := rr.Body.String()
 	required := []string{
-		"event: response.created",
+		"event: response.in_progress",
 		"event: response.output_item.added",
 		"event: response.output_text.delta",
 		"event: response.output_text.done",
