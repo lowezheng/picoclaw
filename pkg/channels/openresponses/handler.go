@@ -205,20 +205,19 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 		itemID := fmt.Sprintf("%s_%d", msgID, msgSeq)
 		msgSeq++
 
-		item := ResponseItem{
+		// response.output_item.added — item starts with empty content per spec.
+		addedItem := ResponseItem{
 			Type:    "message",
 			ID:      itemID,
 			Status:  "in_progress",
 			Role:    "assistant",
-			Content: []Content{{Type: "output_text", Text: ev.content}},
+			Content: []Content{},
 		}
-
-		// response.output_item.added
 		writeSSEEvent(w, "response.output_item.added", ResponseEvent{
 			Type:           "response.output_item.added",
 			SequenceNumber: seq,
 			OutputIndex:    len(outputItems),
-			Item:           item,
+			Item:           addedItem,
 		})
 		seq++
 		flusher.Flush()
@@ -270,18 +269,24 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 		seq++
 		flusher.Flush()
 
-		// response.output_item.done
-		item.Status = "completed"
+		// response.output_item.done — full content revealed here per spec.
+		doneItem := ResponseItem{
+			Type:    "message",
+			ID:      itemID,
+			Status:  "completed",
+			Role:    "assistant",
+			Content: []Content{{Type: "output_text", Text: ev.content}},
+		}
 		writeSSEEvent(w, "response.output_item.done", ResponseEvent{
 			Type:           "response.output_item.done",
 			SequenceNumber: seq,
 			OutputIndex:    len(outputItems),
-			Item:           item,
+			Item:           doneItem,
 		})
 		seq++
 		flusher.Flush()
 
-		outputItems = append(outputItems, item)
+		outputItems = append(outputItems, doneItem)
 	}
 
 	// Final response.completed with accumulated output.

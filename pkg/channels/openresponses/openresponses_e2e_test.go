@@ -229,6 +229,7 @@ func TestE2E_SSEStream(t *testing.T) {
 	// Validate event sequence.
 	expected := []string{
 		"response.created",
+		"response.in_progress",
 		"response.output_item.added",
 		"response.content_part.added",
 		"response.output_text.delta",

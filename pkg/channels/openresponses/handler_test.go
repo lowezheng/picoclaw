@@ -445,6 +445,60 @@ func TestWriteJSONResponseWithStream(t *testing.T) {
 	}
 }
 
+func TestSSEOutputItemAddedHasEmptyContent(t *testing.T) {
+	ch, _ := newTestChannel(t, "secret")
+	defer ch.Stop(context.Background())
+
+	stream := newPendingStream(10)
+	stream.push(streamEvent{kind: eventKindText, content: "Hello world"})
+	stream.close()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ch.writeSSEResponseStream(rr, req, stream, "resp_1", "msg_1", "conv_1", "")
+
+	body := rr.Body.String()
+
+	// Extract the output_item.added event data.
+	var addedEventData string
+	lines := strings.Split(body, "\n")
+	for i := 0; i < len(lines); i++ {
+		if strings.Contains(lines[i], "event: response.output_item.added") && i+1 < len(lines) {
+			addedEventData = strings.TrimPrefix(lines[i+1], "data: ")
+			break
+		}
+	}
+	if addedEventData == "" {
+		t.Fatalf("missing response.output_item.added event data")
+	}
+	var addedEvent ResponseEvent
+	if err := json.Unmarshal([]byte(addedEventData), &addedEvent); err != nil {
+		t.Fatalf("failed to unmarshal added event: %v", err)
+	}
+	if len(addedEvent.Item.Content) != 0 {
+		t.Errorf("expected output_item.added content to be empty, got %v", addedEvent.Item.Content)
+	}
+
+	// Extract the output_item.done event data.
+	var doneEventData string
+	for i := 0; i < len(lines); i++ {
+		if strings.Contains(lines[i], "event: response.output_item.done") && i+1 < len(lines) {
+			doneEventData = strings.TrimPrefix(lines[i+1], "data: ")
+			break
+		}
+	}
+	if doneEventData == "" {
+		t.Fatalf("missing response.output_item.done event data")
+	}
+	var doneEvent ResponseEvent
+	if err := json.Unmarshal([]byte(doneEventData), &doneEvent); err != nil {
+		t.Fatalf("failed to unmarshal done event: %v", err)
+	}
+	if len(doneEvent.Item.Content) != 1 || doneEvent.Item.Content[0].Text != "Hello world" {
+		t.Errorf("expected output_item.done content to have full text, got %v", doneEvent.Item.Content)
+	}
+}
+
 func TestWriteSSEResponseStream(t *testing.T) {
 	ch, _ := newTestChannel(t, "secret")
 	defer ch.Stop(context.Background())
