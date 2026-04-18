@@ -99,8 +99,8 @@ type ResponseEvent struct {
 	Response       Response      `json:"response,omitempty"`
 	Item           ResponseItem  `json:"item,omitempty"`
 	ItemID         string        `json:"item_id,omitempty"`
-	OutputIndex    int           `json:"output_index,omitempty"`
-	ContentIndex   int           `json:"content_index,omitempty"`
+	OutputIndex    int           `json:"output_index"`
+	ContentIndex   int           `json:"content_index"`
 	Delta          string        `json:"delta,omitempty"`
 	Part           Content       `json:"part,omitempty"`
 }
