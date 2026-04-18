@@ -22,6 +22,11 @@ const (
 
 // e2eConfig is the fixed endpoint configuration.
 // Set OPENRESPONSES_SKIP_E2E=1 to skip all e2e tests (e.g. in CI).
+type sseEvent struct {
+	event string
+	data  string
+}
+
 type e2eConfig struct {
 	URL     string
 	Token   string
