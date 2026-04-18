@@ -519,3 +519,71 @@ func TestIntegration_MalformedJSON(t *testing.T) {
 		t.Errorf("expected 400, got %d", rr.Code)
 	}
 }
+
+// --- 16. SSE stream with multiple agent messages ---
+
+func TestIntegration_StreamMultipleMessages(t *testing.T) {
+	ch, msgBus, cleanup := setupIntegration(t)
+	defer cleanup()
+
+	// Mock agent: send 3 messages in sequence.
+	go func() {
+		for {
+			select {
+			case msg, ok := <-msgBus.InboundChan():
+				if !ok {
+					return
+				}
+				for i := 1; i <= 3; i++ {
+					time.Sleep(30 * time.Millisecond)
+					_, _ = ch.Send(context.Background(), bus.OutboundMessage{
+						Channel: msg.Context.Channel,
+						ChatID:  msg.Context.ChatID,
+						Content: fmt.Sprintf("Part %d", i),
+					})
+				}
+			}
+		}
+	}()
+
+	rr := postJSON(t, ch, map[string]any{
+		"input":  "multi",
+		"stream": true,
+	}, nil)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
+		t.Errorf("expected SSE, got %s", ct)
+	}
+
+	events := parseSSEEvents(t, rr.Body.String())
+
+	// Count output_text.delta events.
+	deltaCount := 0
+	for _, ev := range events {
+		if ev.event == "response.output_text.delta" {
+			deltaCount++
+		}
+	}
+	if deltaCount < 3 {
+		t.Errorf("expected at least 3 delta events, got %d", deltaCount)
+	}
+
+	// Verify all parts appear.
+	bodyStr := rr.Body.String()
+	for i := 1; i <= 3; i++ {
+		if !strings.Contains(bodyStr, fmt.Sprintf("Part %d", i)) {
+			t.Errorf("missing Part %d in SSE stream", i)
+		}
+	}
+
+	// Verify terminal events.
+	if !strings.Contains(bodyStr, "event: response.completed") {
+		t.Error("missing response.completed")
+	}
+	if !strings.Contains(bodyStr, "data: [DONE]") {
+		t.Error("missing [DONE] terminator")
+	}
+}
