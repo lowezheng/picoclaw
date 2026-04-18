@@ -340,11 +340,23 @@ func writeSSEEvent(w http.ResponseWriter, eventType string, data any) {
 }
 
 func writeError(w http.ResponseWriter, statusCode int, code, message string) {
+	var errType string
+	switch {
+	case statusCode >= 500:
+		errType = "server_error"
+	case statusCode == http.StatusTooManyRequests:
+		errType = "rate_limit_exceeded"
+	case statusCode == http.StatusNotFound:
+		errType = "not_found"
+	default:
+		errType = "invalid_request"
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"error": map[string]any{
-			"type":    "invalid_request_error",
+			"type":    errType,
 			"code":    code,
 			"message": message,
 		},

@@ -396,6 +396,39 @@ func TestServeHTTPStreamTimeout(t *testing.T) {
 	}
 }
 
+func TestErrorResponseTypeField(t *testing.T) {
+	ch, _ := newTestChannel(t, "secret")
+	defer ch.Stop(context.Background())
+
+	body, _ := json.Marshal(CreateResponseRequest{Input: "   "})
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	ch.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+
+	var resp struct {
+		Error struct {
+			Type    string `json:"type"`
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+	if resp.Error.Type != "invalid_request" {
+		t.Errorf("expected type 'invalid_request', got %q", resp.Error.Type)
+	}
+	if resp.Error.Code != "invalid_request" {
+		t.Errorf("expected code 'invalid_request', got %q", resp.Error.Code)
+	}
+}
+
 func TestBuildResponse(t *testing.T) {
 	resp := buildResponse("resp_1", "msg_1", "conv_1", "prev_1", "Hello")
 	if resp.ID != "resp_1" {
