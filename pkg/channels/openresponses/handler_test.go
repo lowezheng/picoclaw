@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -307,6 +308,94 @@ func TestServeHTTPNotRunning(t *testing.T) {
 	}
 }
 
+func TestServeHTTPStreamMultipleMessages(t *testing.T) {
+	ch, msgBus := newTestChannel(t, "secret")
+	defer ch.Stop(context.Background())
+
+	// Simulate an agent that sends 3 messages in sequence.
+	go func() {
+		for {
+			select {
+			case msg, ok := <-msgBus.InboundChan():
+				if !ok {
+					return
+				}
+				for i := 1; i <= 3; i++ {
+					time.Sleep(30 * time.Millisecond)
+					ch.Send(context.Background(), bus.OutboundMessage{
+						Channel: msg.Context.Channel,
+						ChatID:  msg.Context.ChatID,
+						Content: fmt.Sprintf("Part %d", i),
+					})
+				}
+			}
+		}
+	}()
+
+	body, _ := json.Marshal(CreateResponseRequest{Input: "multi", Stream: true})
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	ch.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
+		t.Errorf("expected SSE content type, got %s", ct)
+	}
+
+	bodyStr := rr.Body.String()
+
+	// Should contain 3 output_text.delta events.
+	count := strings.Count(bodyStr, "response.output_text.delta")
+	if count < 3 {
+		t.Errorf("expected at least 3 output_text.delta events, got %d", count)
+	}
+
+	// Should contain all 3 parts.
+	for i := 1; i <= 3; i++ {
+		if !strings.Contains(bodyStr, fmt.Sprintf("Part %d", i)) {
+			t.Errorf("missing Part %d in SSE stream", i)
+		}
+	}
+
+	if !strings.Contains(bodyStr, "event: response.completed") {
+		t.Error("missing response.completed event")
+	}
+	if !strings.Contains(bodyStr, "data: [DONE]") {
+		t.Error("missing [DONE] terminator")
+	}
+}
+
+func TestServeHTTPStreamTimeout(t *testing.T) {
+	ch, _ := newTestChannel(t, "secret")
+	defer ch.Stop(context.Background())
+
+	ch.config.RequestTimeout = 1 // 1 second timeout
+
+	body, _ := json.Marshal(CreateResponseRequest{Input: "slow", Stream: true})
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	ch.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Should still get a completed response (empty content) after timeout.
+	bodyStr := rr.Body.String()
+	if !strings.Contains(bodyStr, "event: response.completed") {
+		t.Error("missing response.completed event on timeout")
+	}
+	if !strings.Contains(bodyStr, "data: [DONE]") {
+		t.Error("missing [DONE] terminator on timeout")
+	}
+}
+
 func TestBuildResponse(t *testing.T) {
 	resp := buildResponse("resp_1", "msg_1", "conv_1", "prev_1", "Hello")
 	if resp.ID != "resp_1" {
@@ -329,12 +418,16 @@ func TestBuildResponse(t *testing.T) {
 	}
 }
 
-func TestWriteJSONResponse(t *testing.T) {
+func TestWriteJSONResponseWithStream(t *testing.T) {
 	ch, _ := newTestChannel(t, "secret")
 	defer ch.Stop(context.Background())
 
+	stream := newPendingStream(10)
+	stream.push(streamEvent{kind: eventKindText, content: "Test"})
+	stream.close()
+
 	rr := httptest.NewRecorder()
-	ch.writeJSONResponse(rr, "resp_1", "msg_1", "conv_1", "", "Test")
+	ch.writeJSONResponseWithStream(rr, stream, "resp_1", "msg_1", "conv_1", "")
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rr.Code)
@@ -352,12 +445,17 @@ func TestWriteJSONResponse(t *testing.T) {
 	}
 }
 
-func TestWriteSSEResponse(t *testing.T) {
+func TestWriteSSEResponseStream(t *testing.T) {
 	ch, _ := newTestChannel(t, "secret")
 	defer ch.Stop(context.Background())
 
+	stream := newPendingStream(10)
+	stream.push(streamEvent{kind: eventKindText, content: "SSE test"})
+	stream.close()
+
 	rr := httptest.NewRecorder()
-	ch.writeSSEResponse(rr, "resp_1", "msg_1", "conv_1", "", "SSE test")
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ch.writeSSEResponseStream(rr, req, stream, "resp_1", "msg_1", "conv_1", "")
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", rr.Code)
