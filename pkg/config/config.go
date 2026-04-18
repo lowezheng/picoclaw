@@ -498,6 +498,13 @@ type TeamsWebhookSettings struct {
 	Webhooks map[string]TeamsWebhookTarget `json:"webhooks" yaml:"webhooks,omitempty"`
 }
 
+type OpenResponsesSettings struct {
+	Token          SecureString `json:"token,omitzero"          yaml:"token,omitempty"          env:"PICOCLAW_CHANNELS_OPENRESPONSES_TOKEN"`
+	EndpointPath   string       `json:"endpoint_path,omitempty" yaml:"-"                        env:"PICOCLAW_CHANNELS_OPENRESPONSES_ENDPOINT_PATH"`
+	RequestTimeout int          `json:"request_timeout,omitempty" yaml:"-"                      env:"PICOCLAW_CHANNELS_OPENRESPONSES_REQUEST_TIMEOUT"`
+	MaxBodySize    int64        `json:"max_body_size,omitempty" yaml:"-"                        env:"PICOCLAW_CHANNELS_OPENRESPONSES_MAX_BODY_SIZE"`
+}
+
 // TeamsWebhookTarget represents a single Teams webhook destination.
 type TeamsWebhookTarget struct {
 	WebhookURL SecureString `json:"webhook_url,omitzero" yaml:"webhook_url,omitempty"`

@@ -33,6 +33,7 @@ const (
 	ChannelWhatsApp       = "whatsapp"
 	ChannelWhatsAppNative = "whatsapp_native"
 	ChannelTeamsWebHook   = "teams_webhook"
+	ChannelOpenResponses  = "openresponses"
 )
 
 func initChannel() {
@@ -640,6 +641,7 @@ var channelSettingsFactory = map[string]any{
 	ChannelWhatsApp:       (WhatsAppSettings{}),
 	ChannelWhatsAppNative: (WhatsAppSettings{}),
 	ChannelTeamsWebHook:   (TeamsWebhookSettings{}),
+	ChannelOpenResponses:  (OpenResponsesSettings{}),
 }
 
 // newChannelSettings creates a fresh zero-value pointer for the given channel type.
