@@ -124,6 +124,13 @@ func TestDispatchAndSend(t *testing.T) {
 			ChatID:  "conv_123\x00" + extractReqIDFromPending(ch, "conv_123"),
 			Content: "Message 2",
 		})
+		// Signal end-of-turn so the stream closes and the reader goroutine finishes.
+		ch.Send(context.Background(), bus.OutboundMessage{
+			Channel: "openresponses",
+			ChatID:  "conv_123\x00" + extractReqIDFromPending(ch, "conv_123"),
+			Content: "",
+			Context: bus.InboundContext{Raw: map[string]string{"message_kind": "turn_end"}},
+		})
 	}()
 
 	var contents []string
@@ -285,6 +292,8 @@ func TestSendMultipleMessages(t *testing.T) {
 		ChatID:  "conv_123\x00req_test_multi",
 		Content: "Third",
 	})
+	// Close the stream so the range loop terminates.
+	stream.close()
 
 	var contents []string
 	for ev := range stream.events {
