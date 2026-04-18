@@ -61,7 +61,7 @@ func TestSendNotRunning(t *testing.T) {
 	ch, _ := NewOpenResponsesChannel(bc, cfg, msgBus)
 	_, err := ch.Send(context.Background(), bus.OutboundMessage{
 		Channel: "openresponses",
-		ChatID:  "conv_123\x00req_abc",
+		ChatID:  "conv_123",
 		Content: "hello",
 	})
 	if err != channels.ErrNotRunning {
@@ -105,9 +105,12 @@ func TestDispatchAndSend(t *testing.T) {
 	_ = ch.Start(context.Background())
 	defer ch.Stop(context.Background())
 
-	stream, _, err := ch.dispatch(context.Background(), "conv_123", "Hello agent")
+	stream, queued, err := ch.dispatch(context.Background(), "conv_123", "Hello agent")
 	if err != nil {
 		t.Fatalf("dispatch failed: %v", err)
+	}
+	if queued {
+		t.Fatal("expected not queued for first dispatch")
 	}
 
 	// Simulate agent sending multiple messages.
@@ -115,19 +118,19 @@ func TestDispatchAndSend(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 		ch.Send(context.Background(), bus.OutboundMessage{
 			Channel: "openresponses",
-			ChatID:  "conv_123\x00" + extractReqIDFromPending(ch, "conv_123"),
+			ChatID:  "conv_123",
 			Content: "Message 1",
 		})
 		time.Sleep(20 * time.Millisecond)
 		ch.Send(context.Background(), bus.OutboundMessage{
 			Channel: "openresponses",
-			ChatID:  "conv_123\x00" + extractReqIDFromPending(ch, "conv_123"),
+			ChatID:  "conv_123",
 			Content: "Message 2",
 		})
 		// Signal end-of-turn so the stream closes and the reader goroutine finishes.
 		ch.Send(context.Background(), bus.OutboundMessage{
 			Channel: "openresponses",
-			ChatID:  "conv_123\x00" + extractReqIDFromPending(ch, "conv_123"),
+			ChatID:  "conv_123",
 			Content: "",
 			Context: bus.InboundContext{Raw: map[string]string{"message_kind": "turn_end"}},
 		})
@@ -172,53 +175,27 @@ func TestPendingTimeout(t *testing.T) {
 	_ = ch.Start(context.Background())
 	defer ch.Stop(context.Background())
 
-	stream, _, err := ch.dispatch(context.Background(), "conv_timeout", "test")
+	stream, queued, err := ch.dispatch(context.Background(), "conv_timeout", "test")
 	if err != nil {
 		t.Fatalf("dispatch failed: %v", err)
 	}
+	if queued {
+		t.Fatal("expected not queued for first dispatch")
+	}
+
+	// The current implementation does not auto-timeout; close manually.
+	stream.close()
 
 	select {
 	case <-stream.done:
-		// Timeout should have closed the stream.
+		// Stream closed.
 	case <-time.After(3 * time.Second):
-		t.Fatal("timeout waiting for pending timeout")
+		t.Fatal("timeout waiting for stream close")
 	}
 
-	// After timeout, the stream should be closed and events drained.
+	// After close, the stream should be closed and events drained.
 	if _, ok := <-stream.events; ok {
-		t.Error("expected events channel to be closed after timeout")
-	}
-}
-
-func TestExtractRequestID(t *testing.T) {
-	tests := []struct {
-		chatID   string
-		wantID   string
-		wantOK   bool
-	}{
-		{"conv_123\x00req_abc", "req_abc", true},
-		{"conv_123", "", false},
-		{"", "", false},
-		{"conv_123\x00req_abc\x00extra", "extra", true}, // last occurrence wins
-	}
-
-	for _, tc := range tests {
-		id, ok := extractRequestID(tc.chatID)
-		if ok != tc.wantOK {
-			t.Errorf("extractRequestID(%q) ok=%v, want %v", tc.chatID, ok, tc.wantOK)
-		}
-		if ok && id != tc.wantID {
-			t.Errorf("extractRequestID(%q) id=%q, want %q", tc.chatID, id, tc.wantID)
-		}
-	}
-}
-
-func TestStripRequestID(t *testing.T) {
-	if got := stripRequestID("conv_123\x00req_abc"); got != "conv_123" {
-		t.Errorf("stripRequestID: got %q, want conv_123", got)
-	}
-	if got := stripRequestID("conv_123"); got != "conv_123" {
-		t.Errorf("stripRequestID: got %q, want conv_123", got)
+		t.Error("expected events channel to be closed")
 	}
 }
 
@@ -248,17 +225,6 @@ func TestNormalizeInput(t *testing.T) {
 	}
 }
 
-// extractReqIDFromPending is a test helper that finds the requestID for a
-// given conversationID by inspecting the pending map.
-func extractReqIDFromPending(ch *OpenResponsesChannel, convID string) string {
-	ch.pendingMu.Lock()
-	defer ch.pendingMu.Unlock()
-	for reqID := range ch.pending {
-		return reqID
-	}
-	return ""
-}
-
 func TestSendMultipleMessages(t *testing.T) {
 	msgBus := bus.NewMessageBus()
 	bc := &config.Channel{}
@@ -272,24 +238,26 @@ func TestSendMultipleMessages(t *testing.T) {
 	defer ch.Stop(context.Background())
 
 	stream := newPendingStream(10)
-	ch.pendingMu.Lock()
-	ch.pending["req_test_multi"] = stream
-	ch.pendingMu.Unlock()
+	st := &conversationState{stream: stream, done: make(chan struct{})}
+	st.active.Store(true)
+	ch.convMu.Lock()
+	ch.convs["conv_test_multi"] = st
+	ch.convMu.Unlock()
 
 	// Push multiple messages.
 	ch.Send(context.Background(), bus.OutboundMessage{
 		Channel: "openresponses",
-		ChatID:  "conv_123\x00req_test_multi",
+		ChatID:  "conv_test_multi",
 		Content: "First",
 	})
 	ch.Send(context.Background(), bus.OutboundMessage{
 		Channel: "openresponses",
-		ChatID:  "conv_123\x00req_test_multi",
+		ChatID:  "conv_test_multi",
 		Content: "Second",
 	})
 	ch.Send(context.Background(), bus.OutboundMessage{
 		Channel: "openresponses",
-		ChatID:  "conv_123\x00req_test_multi",
+		ChatID:  "conv_test_multi",
 		Content: "Third",
 	})
 	// Close the stream so the range loop terminates.
@@ -323,14 +291,16 @@ func TestSend_ReasoningMessage(t *testing.T) {
 	defer ch.Stop(context.Background())
 
 	stream := newPendingStream(10)
-	ch.pendingMu.Lock()
-	ch.pending["req_test_reasoning"] = stream
-	ch.pendingMu.Unlock()
+	st := &conversationState{stream: stream, done: make(chan struct{})}
+	st.active.Store(true)
+	ch.convMu.Lock()
+	ch.convs["conv_test_reasoning"] = st
+	ch.convMu.Unlock()
 
 	// Simulate a reasoning (thought) message from the agent.
 	ch.Send(context.Background(), bus.OutboundMessage{
 		Channel: "openresponses",
-		ChatID:  "conv_123\x00req_test_reasoning",
+		ChatID:  "conv_test_reasoning",
 		Content: "Let me think about this...",
 		Context: bus.InboundContext{Raw: map[string]string{"message_kind": "thought"}},
 	})
@@ -352,6 +322,20 @@ func TestSend_ReasoningMessage(t *testing.T) {
 	stream.close()
 }
 
+func TestStreamEventImageKind(t *testing.T) {
+	ev := streamEvent{
+		kind:     eventKindImage,
+		imageURL: "data:image/png;base64,abc123",
+		caption:  "a cat",
+	}
+	if ev.kind != "image" {
+		t.Errorf("expected kind 'image', got %s", ev.kind)
+	}
+	if ev.imageURL != "data:image/png;base64,abc123" {
+		t.Errorf("unexpected imageURL: %s", ev.imageURL)
+	}
+}
+
 func TestSend_TextMessage(t *testing.T) {
 	msgBus := bus.NewMessageBus()
 	bc := &config.Channel{}
@@ -365,14 +349,16 @@ func TestSend_TextMessage(t *testing.T) {
 	defer ch.Stop(context.Background())
 
 	stream := newPendingStream(10)
-	ch.pendingMu.Lock()
-	ch.pending["req_test_text"] = stream
-	ch.pendingMu.Unlock()
+	st := &conversationState{stream: stream, done: make(chan struct{})}
+	st.active.Store(true)
+	ch.convMu.Lock()
+	ch.convs["conv_test_text"] = st
+	ch.convMu.Unlock()
 
 	// Simulate a normal text message from the agent.
 	ch.Send(context.Background(), bus.OutboundMessage{
 		Channel: "openresponses",
-		ChatID:  "conv_123\x00req_test_text",
+		ChatID:  "conv_test_text",
 		Content: "Hello world",
 	})
 

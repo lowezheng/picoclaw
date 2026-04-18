@@ -86,8 +86,9 @@ type ResponseItem struct {
 
 // Content is a polymorphic content block inside a message or reasoning item.
 type Content struct {
-	Type string `json:"type"` // "output_text" | "reasoning_text"
-	Text string `json:"text,omitempty"`
+	Type     string `json:"type"` // "output_text" | "output_image" | "reasoning_text"
+	Text     string `json:"text,omitempty"`
+	ImageURL string `json:"image_url,omitempty"` // NEW
 }
 
 // --- SSE Event Types ---
@@ -173,13 +174,16 @@ type streamEventKind string
 const (
 	eventKindText      streamEventKind = "text"
 	eventKindReasoning streamEventKind = "reasoning"
+	eventKindImage     streamEventKind = "image" // NEW
 	eventKindTurnEnd   streamEventKind = "turn_end"
 )
 
 // streamEvent represents one piece of agent output in the stream.
 type streamEvent struct {
-	kind    streamEventKind
-	content string
+	kind     streamEventKind
+	content  string
+	imageURL string // NEW: base64 data URL for output_image
+	caption  string // NEW: optional caption text
 }
 
 // pendingStream holds a queue of agent messages for a single HTTP request.
