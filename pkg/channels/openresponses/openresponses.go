@@ -2,7 +2,6 @@ package openresponses
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -132,16 +131,37 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 
 // dispatch sends the user's input into the PicoClaw MessageBus and returns
 // a pendingStream that the HTTP handler reads from.
-// If the conversation already has an active request, it returns an error.
+// If the conversation already has an active request, it publishes a steering
+// message instead and returns (nil, true, nil).
 func (c *OpenResponsesChannel) dispatch(
 	ctx context.Context,
 	conversationID string,
 	content string,
-) (*pendingStream, error) {
+) (*pendingStream, bool, error) {
 	c.convMu.Lock()
 	if st, ok := c.convs[conversationID]; ok && st.active.Load() {
 		c.convMu.Unlock()
-		return nil, fmt.Errorf("conversation %s already has an active request", conversationID)
+
+		// Active request exists — enqueue steering and tell caller.
+		sender := bus.SenderInfo{
+			Platform:    "openresponses",
+			PlatformID:  "user",
+			CanonicalID: identity.BuildCanonicalID("openresponses", "user"),
+		}
+
+		inboundCtx := bus.InboundContext{
+			Channel:   c.Name(),
+			ChatID:    conversationID,
+			ChatType:  "direct",
+			SenderID:  sender.CanonicalID,
+			MessageID: conversationID,
+			Raw: map[string]string{
+				"conversation_id": conversationID,
+			},
+		}
+
+		c.HandleInboundContext(ctx, conversationID, content, nil, inboundCtx, sender)
+		return nil, true, nil
 	}
 
 	s := newPendingStream(64)
@@ -171,7 +191,7 @@ func (c *OpenResponsesChannel) dispatch(
 	}
 
 	c.HandleInboundContext(ctx, conversationID, content, nil, inboundCtx, sender)
-	return s, nil
+	return s, false, nil
 }
 
 func (c *OpenResponsesChannel) maxBodySize() int64 {
@@ -189,4 +209,3 @@ func (c *OpenResponsesChannel) endpointPath() string {
 	}
 	return p
 }
-

@@ -158,8 +158,7 @@ export function OpenResponsesChatPage() {
   const handleSend = async () => {
     if (
       (!input.trim() && attachments.length === 0) ||
-      !canInput ||
-      connectionState === "sending"
+      !canInput
     ) {
       return
     }
@@ -237,7 +236,6 @@ export function OpenResponsesChatPage() {
 
   const canSubmit =
     canInput &&
-    connectionState !== "sending" &&
     (Boolean(input.trim()) || attachments.length > 0)
 
   return (

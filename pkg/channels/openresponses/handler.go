@@ -94,9 +94,25 @@ func (c *OpenResponsesChannel) handleCreateResponse(w http.ResponseWriter, r *ht
 		ctx = c.ctx
 	}
 
-	stream, err := c.dispatch(ctx, conversationID, content)
+	stream, queued, err := c.dispatch(ctx, conversationID, content)
 	if err != nil {
 		writeError(w, http.StatusTooManyRequests, "request_in_progress", err.Error())
+		return
+	}
+
+	if queued {
+		logger.InfoCF("openresponses", "Sending queued response", map[string]any{
+			"conversation_id": conversationID,
+		})
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+
+		fmt.Fprintf(w, ": queue-%s\n\n", time.Now().Format("2006-01-02"))
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
 		return
 	}
 

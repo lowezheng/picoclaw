@@ -10,10 +10,16 @@ import {
 
 let msgIdCounter = 0
 let activeSessionIdRef = getOpenResponsesChatState().activeSessionId
+let pendingRequestCount = 0
 
 function setActiveSessionId(sessionId: string) {
   activeSessionIdRef = sessionId
   updateOpenResponsesChatStore({ activeSessionId: sessionId })
+}
+
+function adjustPendingCount(delta: number): number {
+  pendingRequestCount += delta
+  return pendingRequestCount
 }
 
 interface SendChatMessageInput {
@@ -25,10 +31,6 @@ export async function sendOpenResponsesChatMessage({
   content,
   attachments = [],
 }: SendChatMessageInput): Promise<boolean> {
-  if (getOpenResponsesChatState().connectionState === "sending") {
-    return false
-  }
-
   const normalizedContent = content.trim()
   const normalizedAttachments = attachments.filter(
     (a) => a.type === "image" && a.url,
@@ -40,6 +42,8 @@ export async function sendOpenResponsesChatMessage({
 
   const id = `msg-${++msgIdCounter}-${Date.now()}`
   const sessionId = activeSessionIdRef
+
+  adjustPendingCount(1)
 
   // Add user message immediately
   updateOpenResponsesChatStore((prev) => ({
@@ -153,10 +157,11 @@ export async function sendOpenResponsesChatMessage({
           ]
         }
       }
+      const remaining = adjustPendingCount(-1)
       return {
         messages,
-        isTyping: false,
-        connectionState: "idle",
+        isTyping: remaining > 0,
+        connectionState: remaining > 0 ? "sending" : "idle",
       }
     })
 
@@ -167,10 +172,11 @@ export async function sendOpenResponsesChatMessage({
       error instanceof Error ? error.message : "Unknown error"
     toast.error(message)
 
+    const remaining = adjustPendingCount(-1)
     updateOpenResponsesChatStore((prev) => ({
       messages: prev.messages.filter((m) => m.id !== id),
-      isTyping: false,
-      connectionState: "error",
+      isTyping: remaining > 0,
+      connectionState: remaining > 0 ? "sending" : "error",
     }))
     return false
   }
