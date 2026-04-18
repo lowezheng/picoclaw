@@ -102,25 +102,36 @@ func (c *OpenResponsesChannel) handleCreateResponse(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// Wait for the agent response, client cancellation, or channel shutdown.
-	select {
-	case <-p.done:
-		// continue below
-	case <-r.Context().Done():
-		writeError(w, http.StatusServiceUnavailable, "server_error", "Request cancelled by client")
-		return
-	case <-c.ctx.Done():
-		writeError(w, http.StatusServiceUnavailable, "server_error", "Channel is shutting down")
-		return
+	// Drain the stream, collecting text events until done or cancelled.
+	var contentParts []string
+	drainLoop:
+	for {
+		select {
+		case ev, ok := <-p.events:
+			if !ok {
+				break drainLoop
+			}
+			if ev.kind == eventKindText {
+				contentParts = append(contentParts, ev.content)
+			}
+		case <-r.Context().Done():
+			writeError(w, http.StatusServiceUnavailable, "server_error", "Request cancelled by client")
+			return
+		case <-c.ctx.Done():
+			writeError(w, http.StatusServiceUnavailable, "server_error", "Channel is shutting down")
+			return
+		}
 	}
+
+	content = strings.Join(contentParts, "")
 
 	respID := "resp_" + requestID[4:] // strip "req_" prefix, keep UUID
 	msgID := "msg_" + requestID[4:]
 
 	if req.Stream {
-		c.writeSSEResponse(w, respID, msgID, conversationID, req.PreviousResponseID, p.content)
+		c.writeSSEResponse(w, respID, msgID, conversationID, req.PreviousResponseID, content)
 	} else {
-		c.writeJSONResponse(w, respID, msgID, conversationID, req.PreviousResponseID, p.content)
+		c.writeJSONResponse(w, respID, msgID, conversationID, req.PreviousResponseID, content)
 	}
 }
 

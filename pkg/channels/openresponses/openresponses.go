@@ -19,26 +19,6 @@ import (
 // It is a null byte, which never appears in normal conversation IDs.
 const reqSep = "\x00"
 
-// pendingResponse holds the state for a single in-flight HTTP request.
-type pendingResponse struct {
-	done    chan struct{}
-	content string
-	once    sync.Once
-}
-
-func newPendingResponse() *pendingResponse {
-	return &pendingResponse{
-		done: make(chan struct{}),
-	}
-}
-
-func (p *pendingResponse) complete(content string) {
-	p.once.Do(func() {
-		p.content = content
-		close(p.done)
-	})
-}
-
 // OpenResponsesChannel implements a PicoClaw channel that exposes an HTTP API
 // compatible with the OpenResponses specification.
 type OpenResponsesChannel struct {
@@ -47,7 +27,7 @@ type OpenResponsesChannel struct {
 	config *config.OpenResponsesSettings
 
 	pendingMu sync.Mutex
-	pending   map[string]*pendingResponse // requestID -> pending
+	pending   map[string]*pendingStream // requestID -> pending
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -71,7 +51,7 @@ func NewOpenResponsesChannel(
 		BaseChannel: base,
 		bc:          bc,
 		config:      cfg,
-		pending:     make(map[string]*pendingResponse),
+		pending:     make(map[string]*pendingStream),
 	}, nil
 }
 
@@ -89,10 +69,10 @@ func (c *OpenResponsesChannel) Stop(ctx context.Context) error {
 	logger.InfoC("openresponses", "Stopping OpenResponses channel")
 	c.SetRunning(false)
 
-	// Complete all pending requests with an empty response so HTTP handlers unblock.
+	// Close all pending streams so HTTP handlers unblock.
 	c.pendingMu.Lock()
-	for _, p := range c.pending {
-		p.complete("")
+	for _, s := range c.pending {
+		s.close()
 	}
 	clear(c.pending)
 	c.pendingMu.Unlock()
@@ -105,8 +85,8 @@ func (c *OpenResponsesChannel) Stop(ctx context.Context) error {
 	return nil
 }
 
-// Send implements channels.Channel. It matches outbound messages to pending
-// HTTP requests using the requestID embedded in ChatID.
+// Send implements channels.Channel. It pushes each outbound message into the
+// pending stream so the HTTP handler can read it in real time.
 func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage) ([]string, error) {
 	if !c.IsRunning() {
 		return nil, channels.ErrNotRunning
@@ -114,39 +94,44 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 
 	requestID, ok := extractRequestID(msg.ChatID)
 	if !ok {
-		// No requestID embedded — this response is not associated with an
-		// active HTTP request (e.g. a cron message or heartbeat). Ignore it.
 		return nil, nil
 	}
 
 	c.pendingMu.Lock()
-	p, found := c.pending[requestID]
-	if found {
-		delete(c.pending, requestID)
-	}
+	stream, found := c.pending[requestID]
 	c.pendingMu.Unlock()
 
 	if !found {
-		// Request already timed out or was cancelled.
 		return nil, nil
 	}
 
-	p.complete(msg.Content)
+	raw := msg.Context.Raw
+	var ev streamEvent
+
+	if raw["message_kind"] == "turn_end" {
+		ev = streamEvent{kind: eventKindTurnEnd}
+		stream.push(ev)
+		stream.close()
+		return nil, nil
+	}
+
+	ev = streamEvent{kind: eventKindText, content: msg.Content}
+	stream.push(ev)
 	return nil, nil
 }
 
-// registerPending creates a new pendingResponse for the given requestID.
-// It also starts a timeout goroutine that auto-cleans the entry.
-func (c *OpenResponsesChannel) registerPending(requestID string, timeout time.Duration) *pendingResponse {
-	p := newPendingResponse()
+// registerPending creates a new pendingStream for the given requestID.
+// It starts a timeout goroutine that auto-closes the stream after the timeout.
+func (c *OpenResponsesChannel) registerPending(requestID string, timeout time.Duration) *pendingStream {
+	s := newPendingStream(64)
 
 	c.pendingMu.Lock()
-	c.pending[requestID] = p
+	c.pending[requestID] = s
 	c.pendingMu.Unlock()
 
 	go func() {
 		select {
-		case <-p.done:
+		case <-s.done:
 			return
 		case <-time.After(timeout):
 			c.pendingMu.Lock()
@@ -154,23 +139,22 @@ func (c *OpenResponsesChannel) registerPending(requestID string, timeout time.Du
 				delete(c.pending, requestID)
 			}
 			c.pendingMu.Unlock()
-			p.complete("")
+			s.close()
 		}
 	}()
 
-	return p
+	return s
 }
 
 // dispatch sends the user's input into the PicoClaw MessageBus and returns
-// a pendingResponse that will be signalled when the agent reply arrives.
+// a pendingStream that the HTTP handler reads from.
 func (c *OpenResponsesChannel) dispatch(
 	ctx context.Context,
 	conversationID string,
 	content string,
-) (*pendingResponse, string, error) {
+) (*pendingStream, string, error) {
 	requestID := "req_" + uuid.New().String()
 
-	// Embed the requestID into ChatID so Send() can correlate the reply.
 	deliveryChatID := conversationID + reqSep + requestID
 
 	sender := bus.SenderInfo{
@@ -192,10 +176,10 @@ func (c *OpenResponsesChannel) dispatch(
 	}
 
 	timeout := c.requestTimeout()
-	p := c.registerPending(requestID, timeout)
+	s := c.registerPending(requestID, timeout)
 
 	c.HandleInboundContext(ctx, deliveryChatID, content, nil, inboundCtx, sender)
-	return p, requestID, nil
+	return s, requestID, nil
 }
 
 func (c *OpenResponsesChannel) requestTimeout() time.Duration {
