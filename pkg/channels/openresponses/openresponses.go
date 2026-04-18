@@ -2,11 +2,10 @@ package openresponses
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
-	"time"
-
-	"github.com/google/uuid"
+	"sync/atomic"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/channels"
@@ -15,10 +14,6 @@ import (
 	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
-// reqSep is the delimiter used to embed the requestID into ChatID.
-// It is a null byte, which never appears in normal conversation IDs.
-const reqSep = "\x00"
-
 // OpenResponsesChannel implements a PicoClaw channel that exposes an HTTP API
 // compatible with the OpenResponses specification.
 type OpenResponsesChannel struct {
@@ -26,11 +21,18 @@ type OpenResponsesChannel struct {
 	bc     *config.Channel
 	config *config.OpenResponsesSettings
 
-	pendingMu sync.Mutex
-	pending   map[string]*pendingStream // requestID -> pending
+	convMu sync.Mutex
+	convs  map[string]*conversationState // conversationID -> state
 
 	ctx    context.Context
 	cancel context.CancelFunc
+}
+
+// conversationState tracks a single active conversation request.
+type conversationState struct {
+	stream *pendingStream
+	done   chan struct{}
+	active atomic.Bool
 }
 
 // NewOpenResponsesChannel creates a new OpenResponses channel.
@@ -51,7 +53,7 @@ func NewOpenResponsesChannel(
 		BaseChannel: base,
 		bc:          bc,
 		config:      cfg,
-		pending:     make(map[string]*pendingStream),
+		convs:       make(map[string]*conversationState),
 	}, nil
 }
 
@@ -69,13 +71,13 @@ func (c *OpenResponsesChannel) Stop(ctx context.Context) error {
 	logger.InfoC("openresponses", "Stopping OpenResponses channel")
 	c.SetRunning(false)
 
-	// Close all pending streams so HTTP handlers unblock.
-	c.pendingMu.Lock()
-	for _, s := range c.pending {
-		s.close()
+	// Close all active conversation streams so HTTP handlers unblock.
+	c.convMu.Lock()
+	for _, st := range c.convs {
+		st.stream.close()
 	}
-	clear(c.pending)
-	c.pendingMu.Unlock()
+	clear(c.convs)
+	c.convMu.Unlock()
 
 	if c.cancel != nil {
 		c.cancel()
@@ -92,14 +94,14 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 		return nil, channels.ErrNotRunning
 	}
 
-	requestID, ok := extractRequestID(msg.ChatID)
-	if !ok {
+	conversationID := msg.ChatID
+	if conversationID == "" {
 		return nil, nil
 	}
 
-	c.pendingMu.Lock()
-	stream, found := c.pending[requestID]
-	c.pendingMu.Unlock()
+	c.convMu.Lock()
+	st, found := c.convs[conversationID]
+	c.convMu.Unlock()
 
 	if !found {
 		return nil, nil
@@ -110,8 +112,12 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 
 	if raw["message_kind"] == "turn_end" {
 		ev = streamEvent{kind: eventKindTurnEnd}
-		stream.push(ev)
-		stream.close()
+		st.stream.push(ev)
+		c.convMu.Lock()
+		delete(c.convs, conversationID)
+		c.convMu.Unlock()
+		close(st.done)
+		st.stream.close()
 		return nil, nil
 	}
 
@@ -120,46 +126,32 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 	} else {
 		ev = streamEvent{kind: eventKindText, content: msg.Content}
 	}
-	stream.push(ev)
+	st.stream.push(ev)
 	return nil, nil
-}
-
-// registerPending creates a new pendingStream for the given requestID.
-// It starts a timeout goroutine that auto-closes the stream after the timeout.
-func (c *OpenResponsesChannel) registerPending(requestID string, timeout time.Duration) *pendingStream {
-	s := newPendingStream(64)
-
-	c.pendingMu.Lock()
-	c.pending[requestID] = s
-	c.pendingMu.Unlock()
-
-	go func() {
-		select {
-		case <-s.done:
-			return
-		case <-time.After(timeout):
-			c.pendingMu.Lock()
-			if _, still := c.pending[requestID]; still {
-				delete(c.pending, requestID)
-			}
-			c.pendingMu.Unlock()
-			s.close()
-		}
-	}()
-
-	return s
 }
 
 // dispatch sends the user's input into the PicoClaw MessageBus and returns
 // a pendingStream that the HTTP handler reads from.
+// If the conversation already has an active request, it returns an error.
 func (c *OpenResponsesChannel) dispatch(
 	ctx context.Context,
 	conversationID string,
 	content string,
-) (*pendingStream, string, error) {
-	requestID := "req_" + uuid.New().String()
+) (*pendingStream, error) {
+	c.convMu.Lock()
+	if st, ok := c.convs[conversationID]; ok && st.active.Load() {
+		c.convMu.Unlock()
+		return nil, fmt.Errorf("conversation %s already has an active request", conversationID)
+	}
 
-	deliveryChatID := conversationID + reqSep + requestID
+	s := newPendingStream(64)
+	st := &conversationState{
+		stream: s,
+		done:   make(chan struct{}),
+	}
+	st.active.Store(true)
+	c.convs[conversationID] = st
+	c.convMu.Unlock()
 
 	sender := bus.SenderInfo{
 		Platform:    "openresponses",
@@ -169,29 +161,17 @@ func (c *OpenResponsesChannel) dispatch(
 
 	inboundCtx := bus.InboundContext{
 		Channel:   c.Name(),
-		ChatID:    deliveryChatID,
+		ChatID:    conversationID,
 		ChatType:  "direct",
 		SenderID:  sender.CanonicalID,
-		MessageID: requestID,
+		MessageID: conversationID,
 		Raw: map[string]string{
-			"request_id":      requestID,
 			"conversation_id": conversationID,
 		},
 	}
 
-	timeout := c.requestTimeout()
-	s := c.registerPending(requestID, timeout)
-
-	c.HandleInboundContext(ctx, deliveryChatID, content, nil, inboundCtx, sender)
-	return s, requestID, nil
-}
-
-func (c *OpenResponsesChannel) requestTimeout() time.Duration {
-	t := c.config.RequestTimeout
-	if t <= 0 {
-		t = 60
-	}
-	return time.Duration(t) * time.Second
+	c.HandleInboundContext(ctx, conversationID, content, nil, inboundCtx, sender)
+	return s, nil
 }
 
 func (c *OpenResponsesChannel) maxBodySize() int64 {
@@ -210,21 +190,3 @@ func (c *OpenResponsesChannel) endpointPath() string {
 	return p
 }
 
-// extractRequestID extracts the requestID from a ChatID that was encoded by
-// dispatch. Returns ("", false) if the ChatID does not contain the marker.
-func extractRequestID(chatID string) (string, bool) {
-	idx := strings.LastIndex(chatID, reqSep)
-	if idx < 0 {
-		return "", false
-	}
-	return chatID[idx+len(reqSep):], true
-}
-
-// stripRequestID returns the conversationID portion of an encoded ChatID.
-func stripRequestID(chatID string) string {
-	idx := strings.LastIndex(chatID, reqSep)
-	if idx < 0 {
-		return chatID
-	}
-	return chatID[:idx]
-}

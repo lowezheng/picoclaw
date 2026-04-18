@@ -94,29 +94,20 @@ func (c *OpenResponsesChannel) handleCreateResponse(w http.ResponseWriter, r *ht
 		ctx = c.ctx
 	}
 
-	stream, requestID, err := c.dispatch(ctx, conversationID, content)
+	stream, err := c.dispatch(ctx, conversationID, content)
 	if err != nil {
-		logger.ErrorCF("openresponses", "Failed to dispatch request", map[string]any{
-			"error": err.Error(),
-		})
-		writeError(w, http.StatusInternalServerError, "server_error", "Failed to process request")
+		writeError(w, http.StatusTooManyRequests, "request_in_progress", err.Error())
 		return
 	}
 
-	respID := "resp_" + requestID[4:] // strip "req_" prefix, keep UUID
-	msgID := "msg_" + requestID[4:]
+	respID := "resp_" + conversationID
+	msgID := "msg_" + conversationID
 
 	if req.Stream {
 		c.writeSSEResponseStream(w, r, stream, respID, msgID, conversationID, req.PreviousResponseID)
 	} else {
 		c.writeJSONResponseWithStream(w, stream, respID, msgID, conversationID, req.PreviousResponseID)
 	}
-
-	// Clean up the pending entry after handler finishes.
-	c.pendingMu.Lock()
-	delete(c.pending, requestID)
-	c.pendingMu.Unlock()
-	stream.close()
 }
 
 // writeJSONResponseWithStream collects all messages from the stream and
