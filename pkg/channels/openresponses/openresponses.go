@@ -123,14 +123,7 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 // registerPending creates a new pendingStream for the given requestID.
 // It starts a timeout goroutine that auto-closes the stream after the timeout.
 func (c *OpenResponsesChannel) registerPending(requestID string, timeout time.Duration) *pendingStream {
-	// Idle timeout: close the stream after 3s of inactivity so single-message
-	// requests finish promptly without waiting for the full request timeout.
-	idleTimeout := 3 * time.Second
-	if timeout > 0 && timeout < idleTimeout {
-		idleTimeout = timeout
-	}
-
-	s := newPendingStream(64, idleTimeout)
+	s := newPendingStream(64)
 
 	c.pendingMu.Lock()
 	c.pending[requestID] = s

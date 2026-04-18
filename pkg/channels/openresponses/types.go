@@ -175,32 +175,23 @@ type streamEvent struct {
 
 // pendingStream holds a queue of agent messages for a single HTTP request.
 // The HTTP handler reads from events; Send() pushes into it.
-// An idle timer auto-closes the stream after a period of inactivity so that
-// single-message requests finish promptly even without an explicit turn_end.
 // Once closed, no more events are accepted.
 type pendingStream struct {
-	events      chan streamEvent
-	done        chan struct{}
-	once        sync.Once
-	mu          sync.Mutex
-	closed      bool
-	idleTimer   *time.Timer
-	idleTimeout time.Duration
+	events chan streamEvent
+	done   chan struct{}
+	once   sync.Once
+	mu     sync.Mutex
+	closed bool
 }
 
-func newPendingStream(bufSize int, idleTimeout time.Duration) *pendingStream {
-	s := &pendingStream{
-		events:      make(chan streamEvent, bufSize),
-		done:        make(chan struct{}),
-		idleTimeout: idleTimeout,
+func newPendingStream(bufSize int) *pendingStream {
+	return &pendingStream{
+		events: make(chan streamEvent, bufSize),
+		done:   make(chan struct{}),
 	}
-	// Start idle timer; it will close the stream if no events arrive.
-	s.idleTimer = time.AfterFunc(idleTimeout, func() { s.close() })
-	return s
 }
 
 // push adds an event to the stream. Returns false if the stream is closed or full.
-// Resets the idle timer on every successful push.
 func (s *pendingStream) push(ev streamEvent) bool {
 	s.mu.Lock()
 	if s.closed {
@@ -210,7 +201,6 @@ func (s *pendingStream) push(ev streamEvent) bool {
 	s.mu.Unlock()
 	select {
 	case s.events <- ev:
-		s.idleTimer.Reset(s.idleTimeout)
 		return true
 	default:
 		return false
@@ -222,9 +212,6 @@ func (s *pendingStream) close() {
 	s.once.Do(func() {
 		s.mu.Lock()
 		s.closed = true
-		if s.idleTimer != nil {
-			s.idleTimer.Stop()
-		}
 		close(s.events)
 		close(s.done)
 		s.mu.Unlock()

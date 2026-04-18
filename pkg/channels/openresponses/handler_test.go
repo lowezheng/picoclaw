@@ -422,7 +422,7 @@ func TestWriteJSONResponseWithStream(t *testing.T) {
 	ch, _ := newTestChannel(t, "secret")
 	defer ch.Stop(context.Background())
 
-	stream := newPendingStream(10, 100*time.Millisecond)
+	stream := newPendingStream(10)
 	stream.push(streamEvent{kind: eventKindText, content: "Test"})
 	stream.close()
 
@@ -449,7 +449,7 @@ func TestWriteSSEResponseStream(t *testing.T) {
 	ch, _ := newTestChannel(t, "secret")
 	defer ch.Stop(context.Background())
 
-	stream := newPendingStream(10, 100*time.Millisecond)
+	stream := newPendingStream(10)
 	stream.push(streamEvent{kind: eventKindText, content: "SSE test"})
 	stream.close()
 
