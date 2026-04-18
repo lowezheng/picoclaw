@@ -1,11 +1,13 @@
 package openresponses
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -89,11 +91,10 @@ func (c *OpenResponsesChannel) handleCreateResponse(w http.ResponseWriter, r *ht
 
 	ctx := r.Context()
 	if c.ctx != nil {
-		// Prefer the channel lifecycle context so shutdown cancels in-flight requests.
 		ctx = c.ctx
 	}
 
-	p, requestID, err := c.dispatch(ctx, conversationID, content)
+	stream, requestID, err := c.dispatch(ctx, conversationID, content)
 	if err != nil {
 		logger.ErrorCF("openresponses", "Failed to dispatch request", map[string]any{
 			"error": err.Error(),
@@ -102,41 +103,38 @@ func (c *OpenResponsesChannel) handleCreateResponse(w http.ResponseWriter, r *ht
 		return
 	}
 
-	// Drain the stream, collecting text events until done or cancelled.
-	var contentParts []string
-	drainLoop:
-	for {
-		select {
-		case ev, ok := <-p.events:
-			if !ok {
-				break drainLoop
-			}
-			if ev.kind == eventKindText {
-				contentParts = append(contentParts, ev.content)
-			}
-		case <-r.Context().Done():
-			writeError(w, http.StatusServiceUnavailable, "server_error", "Request cancelled by client")
-			return
-		case <-c.ctx.Done():
-			writeError(w, http.StatusServiceUnavailable, "server_error", "Channel is shutting down")
-			return
-		}
-	}
-
-	content = strings.Join(contentParts, "")
-
 	respID := "resp_" + requestID[4:] // strip "req_" prefix, keep UUID
 	msgID := "msg_" + requestID[4:]
 
 	if req.Stream {
-		c.writeSSEResponse(w, respID, msgID, conversationID, req.PreviousResponseID, content)
+		c.writeSSEResponseStream(w, r, stream, respID, msgID, conversationID, req.PreviousResponseID)
 	} else {
-		c.writeJSONResponse(w, respID, msgID, conversationID, req.PreviousResponseID, content)
+		c.writeJSONResponseWithStream(w, stream, respID, msgID, conversationID, req.PreviousResponseID)
 	}
+
+	// Clean up the pending entry after handler finishes.
+	c.pendingMu.Lock()
+	delete(c.pending, requestID)
+	c.pendingMu.Unlock()
+	stream.close()
 }
 
-// writeJSONResponse writes a completed OpenResponses JSON response.
-func (c *OpenResponsesChannel) writeJSONResponse(w http.ResponseWriter, respID, msgID, conversationID, previousResponseID, content string) {
+// writeJSONResponseWithStream collects all messages from the stream and
+// writes a single completed OpenResponses JSON response.
+func (c *OpenResponsesChannel) writeJSONResponseWithStream(
+	w http.ResponseWriter,
+	stream *pendingStream,
+	respID, msgID, conversationID, previousResponseID string,
+) {
+	var parts []string
+
+	for ev := range stream.events {
+		if ev.kind == eventKindText && ev.content != "" {
+			parts = append(parts, ev.content)
+		}
+	}
+
+	content := strings.Join(parts, "\n")
 	resp := buildResponse(respID, msgID, conversationID, previousResponseID, content)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -148,12 +146,18 @@ func (c *OpenResponsesChannel) writeJSONResponse(w http.ResponseWriter, respID, 
 	}
 }
 
-// writeSSEResponse writes a minimal but spec-compliant SSE stream.
-func (c *OpenResponsesChannel) writeSSEResponse(w http.ResponseWriter, respID, msgID, conversationID, previousResponseID, content string) {
+// writeSSEResponseStream reads messages from the stream in real time and
+// writes them as SSE events. A heartbeat goroutine sends keep-alive comments
+// every 5 seconds to prevent proxy timeout during long tool execution.
+func (c *OpenResponsesChannel) writeSSEResponseStream(
+	w http.ResponseWriter,
+	r *http.Request,
+	stream *pendingStream,
+	respID, msgID, conversationID, previousResponseID string,
+) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		// Fallback: write as single JSON event if streaming is not supported.
-		c.writeJSONResponse(w, respID, msgID, conversationID, previousResponseID, content)
+		c.writeJSONResponseWithStream(w, stream, respID, msgID, conversationID, previousResponseID)
 		return
 	}
 
@@ -162,10 +166,11 @@ func (c *OpenResponsesChannel) writeSSEResponse(w http.ResponseWriter, respID, m
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
-	resp := buildResponse(respID, msgID, conversationID, previousResponseID, content)
 	seq := 0
+	var outputItems []ResponseItem
 
 	// 1. response.created
+	resp := buildResponse(respID, msgID, conversationID, previousResponseID, "")
 	writeSSEEvent(w, "response.created", ResponseEvent{
 		Type:           "response.created",
 		SequenceNumber: seq,
@@ -174,73 +179,122 @@ func (c *OpenResponsesChannel) writeSSEResponse(w http.ResponseWriter, respID, m
 	seq++
 	flusher.Flush()
 
-	// 2. response.output_item.added
-	item := resp.Output[0]
-	writeSSEEvent(w, "response.output_item.added", ResponseEvent{
-		Type:           "response.output_item.added",
-		SequenceNumber: seq,
-		OutputIndex:    0,
-		Item:           item,
-	})
-	seq++
-	flusher.Flush()
+	// Start heartbeat goroutine.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
 
-	// 3. response.content_part.added
-	writeSSEEvent(w, "response.content_part.added", ResponseEvent{
-		Type:           "response.content_part.added",
-		SequenceNumber: seq,
-		ItemID:         msgID,
-		OutputIndex:    0,
-		ContentIndex:   0,
-	})
-	seq++
-	flusher.Flush()
+	heartbeatDone := make(chan struct{})
+	go func() {
+		defer close(heartbeatDone)
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				fmt.Fprint(w, ": heartbeat\n\n")
+				flusher.Flush()
+			case <-ctx.Done():
+				return
+			case <-stream.done:
+				return
+			}
+		}
+	}()
 
-	// 4. response.output_text.delta
-	writeSSEEvent(w, "response.output_text.delta", ResponseEvent{
-		Type:           "response.output_text.delta",
-		SequenceNumber: seq,
-		ItemID:         msgID,
-		OutputIndex:    0,
-		ContentIndex:   0,
-		Delta:          content,
-	})
-	seq++
-	flusher.Flush()
+	// Read stream events and emit SSE events.
+	msgSeq := 0
+	for ev := range stream.events {
+		if ev.kind != eventKindText || ev.content == "" {
+			continue
+		}
 
-	// 5. response.output_text.done
-	writeSSEEvent(w, "response.output_text.done", ResponseEvent{
-		Type:           "response.output_text.done",
-		SequenceNumber: seq,
-		ItemID:         msgID,
-		OutputIndex:    0,
-		ContentIndex:   0,
-	})
-	seq++
-	flusher.Flush()
+		itemID := fmt.Sprintf("%s_%d", msgID, msgSeq)
+		msgSeq++
 
-	// 6. response.content_part.done
-	writeSSEEvent(w, "response.content_part.done", ResponseEvent{
-		Type:           "response.content_part.done",
-		SequenceNumber: seq,
-		ItemID:         msgID,
-		OutputIndex:    0,
-		ContentIndex:   0,
-	})
-	seq++
-	flusher.Flush()
+		item := ResponseItem{
+			Type:    "message",
+			ID:      itemID,
+			Status:  "completed",
+			Role:    "assistant",
+			Content: []Content{{Type: "output_text", Text: ev.content}},
+		}
 
-	// 7. response.output_item.done
-	writeSSEEvent(w, "response.output_item.done", ResponseEvent{
-		Type:           "response.output_item.done",
-		SequenceNumber: seq,
-		OutputIndex:    0,
-		Item:           item,
-	})
-	seq++
-	flusher.Flush()
+		// response.output_item.added
+		writeSSEEvent(w, "response.output_item.added", ResponseEvent{
+			Type:           "response.output_item.added",
+			SequenceNumber: seq,
+			OutputIndex:    len(outputItems),
+			Item:           item,
+		})
+		seq++
+		flusher.Flush()
 
-	// 8. response.completed
+		// response.content_part.added
+		writeSSEEvent(w, "response.content_part.added", ResponseEvent{
+			Type:           "response.content_part.added",
+			SequenceNumber: seq,
+			ItemID:         itemID,
+			OutputIndex:    len(outputItems),
+			ContentIndex:   0,
+		})
+		seq++
+		flusher.Flush()
+
+		// response.output_text.delta
+		writeSSEEvent(w, "response.output_text.delta", ResponseEvent{
+			Type:           "response.output_text.delta",
+			SequenceNumber: seq,
+			ItemID:         itemID,
+			OutputIndex:    len(outputItems),
+			ContentIndex:   0,
+			Delta:          ev.content,
+		})
+		seq++
+		flusher.Flush()
+
+		// response.output_text.done
+		writeSSEEvent(w, "response.output_text.done", ResponseEvent{
+			Type:           "response.output_text.done",
+			SequenceNumber: seq,
+			ItemID:         itemID,
+			OutputIndex:    len(outputItems),
+			ContentIndex:   0,
+		})
+		seq++
+		flusher.Flush()
+
+		// response.content_part.done
+		writeSSEEvent(w, "response.content_part.done", ResponseEvent{
+			Type:           "response.content_part.done",
+			SequenceNumber: seq,
+			ItemID:         itemID,
+			OutputIndex:    len(outputItems),
+			ContentIndex:   0,
+		})
+		seq++
+		flusher.Flush()
+
+		// response.output_item.done
+		writeSSEEvent(w, "response.output_item.done", ResponseEvent{
+			Type:           "response.output_item.done",
+			SequenceNumber: seq,
+			OutputIndex:    len(outputItems),
+			Item:           item,
+		})
+		seq++
+		flusher.Flush()
+
+		outputItems = append(outputItems, item)
+	}
+
+	// Wait for heartbeat to finish.
+	cancel()
+	<-heartbeatDone
+
+	// Final response.completed with accumulated output.
+	if len(outputItems) > 0 {
+		resp.Output = outputItems
+	}
 	writeSSEEvent(w, "response.completed", ResponseEvent{
 		Type:           "response.completed",
 		SequenceNumber: seq,
@@ -248,7 +302,7 @@ func (c *OpenResponsesChannel) writeSSEResponse(w http.ResponseWriter, respID, m
 	})
 	flusher.Flush()
 
-	// Terminal marker
+	// Terminal marker.
 	fmt.Fprint(w, "data: [DONE]\n\n")
 	flusher.Flush()
 }
