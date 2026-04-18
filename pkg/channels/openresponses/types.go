@@ -2,6 +2,7 @@ package openresponses
 
 import (
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -154,4 +155,65 @@ func normalizeInput(input any) string {
 	}
 
 	return strings.Join(parts, "\n")
+}
+
+// --- Streaming Types (Path A) ---
+
+// streamEventKind categorizes events in the pending stream.
+type streamEventKind string
+
+const (
+	eventKindText    streamEventKind = "text"
+	eventKindTurnEnd streamEventKind = "turn_end"
+)
+
+// streamEvent represents one piece of agent output in the stream.
+type streamEvent struct {
+	kind    streamEventKind
+	content string
+}
+
+// pendingStream holds a queue of agent messages for a single HTTP request.
+// The HTTP handler reads from events; Send() pushes into it.
+// Once closed, no more events are accepted.
+type pendingStream struct {
+	events chan streamEvent
+	done   chan struct{}
+	once   sync.Once
+	mu     sync.Mutex
+	closed bool
+}
+
+func newPendingStream(bufSize int) *pendingStream {
+	return &pendingStream{
+		events: make(chan streamEvent, bufSize),
+		done:   make(chan struct{}),
+	}
+}
+
+// push adds an event to the stream. Returns false if the stream is closed or full.
+func (s *pendingStream) push(ev streamEvent) bool {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return false
+	}
+	s.mu.Unlock()
+	select {
+	case s.events <- ev:
+		return true
+	default:
+		return false
+	}
+}
+
+// close marks the stream as done. Safe to call multiple times.
+func (s *pendingStream) close() {
+	s.once.Do(func() {
+		s.mu.Lock()
+		s.closed = true
+		close(s.events)
+		close(s.done)
+		s.mu.Unlock()
+	})
 }
