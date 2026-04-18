@@ -21,18 +21,6 @@ interface SendChatMessageInput {
   attachments?: ChatAttachment[]
 }
 
-function buildInputFromHistory(
-  messages: Array<{ role: string; content: string }>,
-): Array<{ type: string; role: string; content: string }> {
-  const input: Array<{ type: string; role: string; content: string }> = []
-  for (const msg of messages) {
-    if (msg.role === "user" || msg.role === "assistant") {
-      input.push({ type: "message", role: msg.role, content: msg.content })
-    }
-  }
-  return input
-}
-
 export async function sendOpenResponsesChatMessage({
   content,
   attachments = [],
@@ -71,12 +59,9 @@ export async function sendOpenResponsesChatMessage({
   }))
 
   try {
-    // Build conversation history for multi-turn support
-    const history = getOpenResponsesChatState().messages
-      .filter((m) => m.role === "user" || m.role === "assistant")
-      .map((m) => ({ role: m.role, content: m.content }))
-
-    const input = buildInputFromHistory(history)
+    // Only send the current user input; the backend manages conversation
+    // history via conversation_id.
+    const input = normalizedContent
 
     const assistantMessages = new Map<
       number,
