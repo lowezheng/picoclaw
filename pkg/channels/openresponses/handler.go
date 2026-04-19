@@ -136,9 +136,36 @@ func (c *OpenResponsesChannel) writeJSONResponseWithStream(
 	var outputItems []ResponseItem
 	msgSeq := 0
 
+	// textBuf accumulates deltas from streaming mode.
+	var textBuf string
+	flushTextBuf := func() {
+		if textBuf == "" {
+			return
+		}
+		itemID := fmt.Sprintf("%s_%d", msgID, msgSeq)
+		msgSeq++
+		outputItems = append(outputItems, ResponseItem{
+			Type:   "message",
+			ID:     itemID,
+			Status: "completed",
+			Role:   "assistant",
+			Content: []Content{
+				{Type: "output_text", Text: textBuf},
+			},
+		})
+		textBuf = ""
+	}
+
 	for ev := range stream.events {
 		switch ev.kind {
+		case eventKindTextDelta:
+			// Accumulate streaming deltas for later flush.
+			textBuf += ev.content
+		case eventKindTurnEnd:
+			// Streaming turn finished: flush accumulated text.
+			flushTextBuf()
 		case eventKindText:
+			// Non-streaming full-text event.
 			itemID := fmt.Sprintf("%s_%d", msgID, msgSeq)
 			msgSeq++
 			outputItems = append(outputItems, ResponseItem{
@@ -151,6 +178,7 @@ func (c *OpenResponsesChannel) writeJSONResponseWithStream(
 				},
 			})
 		case eventKindReasoning:
+			flushTextBuf()
 			itemID := fmt.Sprintf("%s_%d", msgID, msgSeq)
 			msgSeq++
 			outputItems = append(outputItems, ResponseItem{
@@ -162,6 +190,7 @@ func (c *OpenResponsesChannel) writeJSONResponseWithStream(
 				},
 			})
 		case eventKindImage:
+			flushTextBuf()
 			itemID := fmt.Sprintf("%s_%d", msgID, msgSeq)
 			msgSeq++
 			outputItems = append(outputItems, ResponseItem{
@@ -174,6 +203,7 @@ func (c *OpenResponsesChannel) writeJSONResponseWithStream(
 				},
 			})
 		case eventKindFunctionCall:
+			flushTextBuf()
 			itemID := fmt.Sprintf("%s_%d", msgID, msgSeq)
 			msgSeq++
 			outputItems = append(outputItems, ResponseItem{
@@ -186,6 +216,9 @@ func (c *OpenResponsesChannel) writeJSONResponseWithStream(
 			})
 		}
 	}
+
+	// Flush any remaining buffered text after the channel closes.
+	flushTextBuf()
 
 	resp := Response{
 		ID:                 respID,

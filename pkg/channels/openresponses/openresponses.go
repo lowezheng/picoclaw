@@ -33,9 +33,10 @@ type OpenResponsesChannel struct {
 
 // conversationState tracks a single active conversation request.
 type conversationState struct {
-	stream *pendingStream
-	done   chan struct{}
-	active atomic.Bool
+	stream     *pendingStream
+	done       chan struct{}
+	active     atomic.Bool
+	hasStreamer atomic.Bool
 }
 
 // NewOpenResponsesChannel creates a new OpenResponses channel.
@@ -110,11 +111,11 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 		return nil, nil
 	}
 
-	// If a streamer is active (streaming mode), skip the full-text message
-	// because it has already been delivered incrementally via Update().
-	// Allow thought/function_call/image events through.
+	// If a streamer is actually in use, skip the full-text message because it
+	// has already been delivered incrementally via Update().
+	// Allow thought/function_call/turn_end events through.
 	raw := msg.Context.Raw
-	if st.active.Load() && raw["message_kind"] != "thought" && raw["message_kind"] != "function_call" {
+	if st.hasStreamer.Load() && raw["message_kind"] != "thought" && raw["message_kind"] != "function_call" && raw["message_kind"] != "turn_end" {
 		return nil, nil
 	}
 
@@ -342,6 +343,9 @@ func (c *OpenResponsesChannel) endpointPath() string {
 func (c *OpenResponsesChannel) BeginStream(ctx context.Context, chatID string) (channels.Streamer, error) {
 	c.convMu.Lock()
 	st, found := c.convs[chatID]
+	if found {
+		st.hasStreamer.Store(true)
+	}
 	c.convMu.Unlock()
 
 	if !found {
