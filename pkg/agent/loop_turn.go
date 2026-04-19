@@ -143,6 +143,13 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 	}
 	pendingMessages := append([]providers.Message(nil), ts.opts.InitialSteeringMessages...)
 	var finalContent string
+	var activeStreamer bus.Streamer
+	defer func() {
+		if activeStreamer != nil {
+			activeStreamer.Cancel(turnCtx)
+			activeStreamer = nil
+		}
+	}()
 
 turnLoop:
 	for ts.currentIteration() < ts.agent.MaxIterations || len(pendingMessages) > 0 || func() bool {
@@ -370,6 +377,7 @@ turnLoop:
 			if al.cfg.Agents.Defaults.StreamResponse && len(activeCandidates) <= 1 {
 				if sp, ok := activeProvider.(providers.StreamingProvider); ok {
 					if streamer, ok := al.bus.GetStreamer(providerCtx, ts.channel, ts.chatID); ok && streamer != nil {
+						activeStreamer = streamer
 						return al.callLLMStream(providerCtx, sp, streamer, messagesForCall, toolDefsForCall, llmModel, llmOpts, ts.channel, ts.chatID)
 					}
 				}
@@ -692,6 +700,14 @@ turnLoop:
 					"iteration":     iteration,
 					"content_chars": len(finalContent),
 				})
+			if activeStreamer != nil {
+				if err := activeStreamer.Finalize(turnCtx, response.Content); err != nil {
+					logger.DebugCF("agent", "streamer finalize failed", map[string]any{
+						"error": err.Error(),
+					})
+				}
+				activeStreamer = nil
+			}
 			break
 		}
 
@@ -1633,12 +1649,6 @@ func (al *AgentLoop) callLLMStream(
 	// Defensive: ensure resp.Content matches what was actually streamed
 	if resp != nil && content.Len() > 0 {
 		resp.Content = content.String()
-	}
-
-	if finalizeErr := streamer.Finalize(ctx, resp.Content); finalizeErr != nil {
-		logger.DebugCF("agent", "streamer finalize failed", map[string]any{
-			"error": finalizeErr.Error(),
-		})
 	}
 
 	return resp, nil
