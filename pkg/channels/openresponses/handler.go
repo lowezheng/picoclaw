@@ -500,7 +500,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			seq++
 			flushAndExtend()
 
-			// response.output_item.done
+			// response.output_item.done (strip image_url to save bandwidth)
 			doneItem := ResponseItem{
 				Type:    "message",
 				ID:      itemID,
@@ -512,7 +512,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 				Type:           "response.output_item.done",
 				SequenceNumber: seq,
 				OutputIndex:    len(outputItems),
-				Item:           doneItem,
+				Item:           stripImageURLsFromItem(doneItem),
 			})
 			seq++
 			flushAndExtend()
@@ -529,7 +529,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 	resp.Status = "completed"
 	resp.Usage = Usage{InputTokens: 0, OutputTokens: 0}
 	if len(outputItems) > 0 {
-		resp.Output = outputItems
+		resp.Output = stripImageURLs(outputItems)
 	}
 	writeSSEEvent(w, "response.completed", ResponseEvent{
 		Type:           "response.completed",
@@ -599,4 +599,30 @@ func writeError(w http.ResponseWriter, statusCode int, code, message string) {
 			"message": message,
 		},
 	})
+}
+
+// stripImageURLs removes ImageURL from output_image content parts to save
+// bandwidth in SSE events where the full data URL was already sent via
+// response.content_part.done.
+func stripImageURLs(items []ResponseItem) []ResponseItem {
+	stripped := make([]ResponseItem, len(items))
+	for i, item := range items {
+		stripped[i] = stripImageURLsFromItem(item)
+	}
+	return stripped
+}
+
+func stripImageURLsFromItem(item ResponseItem) ResponseItem {
+	if len(item.Content) == 0 {
+		return item
+	}
+	newContent := make([]Content, len(item.Content))
+	for j, c := range item.Content {
+		newContent[j] = c
+		if c.Type == "output_image" {
+			newContent[j].ImageURL = ""
+		}
+	}
+	item.Content = newContent
+	return item
 }

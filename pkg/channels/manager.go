@@ -1006,6 +1006,11 @@ func (m *Manager) sendMediaWithRetry(
 	// Pre-send: stop typing and clean up any placeholder before sending media.
 	m.preSendMedia(ctx, name, msg, w.ch)
 
+	logger.DebugCF("channels", "Manager SendMedia", map[string]any{
+		"channel":     name,
+		"chat_id":     outboundMediaChatID(msg),
+		"parts_count": len(msg.Parts),
+	})
 	var lastErr error
 	var msgIDs []string
 	for attempt := 0; attempt <= maxRetries; attempt++ {

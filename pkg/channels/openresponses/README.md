@@ -255,6 +255,23 @@ All items share these required fields: `id`, `type`, `status`.
 }
 ```
 
+#### `output_image` (model output — reserved/future)
+
+```json
+{
+  "type": "output_image",
+  "image_url": "https://..."
+}
+```
+```json
+{
+  "type": "output_image",
+  "image_url": "data:image/png;base64,XXXXXX"
+}
+```
+
+> Spec extension: `output_image` is not yet widely implemented but is documented as a future content part type.
+
 #### `input_text` (user input)
 
 ```json
@@ -273,6 +290,27 @@ All items share these required fields: `id`, `type`, `status`.
 }
 ```
 
+#### `input_file` (user input)
+
+```json
+{
+  "type": "input_file",
+  "file_id": "assistant-123456789"
+}
+```
+
+Also supports `file_data` (base64) and `file_url`.
+
+#### `input_audio` (user input)
+
+```json
+{
+  "type": "input_audio",
+  "audio_data": "base64-encoded-audio",
+  "format": "mp3"
+}
+```
+
 #### `summary_text` (reasoning summary)
 
 ```json
@@ -288,6 +326,17 @@ All items share these required fields: `id`, `type`, `status`.
 {
   "type": "refusal",
   "refusal": "I cannot answer this question."
+}
+```
+
+#### `function_call_arguments` (streaming content part)
+
+Used within a `function_call` item during SSE streaming. The content part type is `function_call_arguments`, producing `response.function_call_arguments.delta` and `.done` events.
+
+```json
+{
+  "type": "function_call_arguments",
+  "arguments": "{\"city\":\"Beijing\"}"
 }
 ```
 

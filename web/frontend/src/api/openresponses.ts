@@ -192,6 +192,26 @@ export async function sendOpenResponsesMessage(
         } catch (err) {
           console.warn("Failed to parse SSE delta JSON:", parsedBlock.data, err)
         }
+      } else if (parsedBlock.event === "response.content_part.done") {
+        try {
+          const parsedJSON = JSON.parse(parsedBlock.data) as {
+            output_index?: number
+            part?: { type?: string; image_url?: string }
+          }
+          if (
+            typeof parsedJSON.output_index === "number" &&
+            parsedJSON.part?.type === "output_image" &&
+            parsedJSON.part.image_url
+          ) {
+            onStreamEvent?.({
+              type: "image",
+              outputIndex: parsedJSON.output_index,
+              delta: parsedJSON.part.image_url,
+            })
+          }
+        } catch (err) {
+          console.warn("Failed to parse SSE content_part.done JSON:", parsedBlock.data, err)
+        }
       } else if (parsedBlock.event === "done") {
         // Terminal marker — stream ends here.
       } else if (parsedBlock.event === "response.completed") {

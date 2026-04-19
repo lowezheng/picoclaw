@@ -73,6 +73,7 @@ export async function sendOpenResponsesChatMessage({
       number,
       { id: string; content: string; kind?: "thought" }
     >()
+    const assistantImages = new Map<number, string[]>()
 
     await sendOpenResponsesMessage(
       {
@@ -132,6 +133,23 @@ export async function sendOpenResponsesChatMessage({
               ],
             }
           })
+        } else if (event.type === "image" && typeof event.outputIndex === "number" && event.delta) {
+          const images = assistantImages.get(event.outputIndex) ?? []
+          images.push(event.delta)
+          assistantImages.set(event.outputIndex, images)
+          const msg = assistantMessages.get(event.outputIndex)
+          if (msg) {
+            updateOpenResponsesChatStore((prev) => ({
+              messages: prev.messages.map((m) =>
+                m.id === msg.id
+                  ? {
+                      ...m,
+                      attachments: images.map((url) => ({ type: "image" as const, url })),
+                    }
+                  : m,
+              ),
+            }))
+          }
         }
       },
     )
@@ -139,12 +157,19 @@ export async function sendOpenResponsesChatMessage({
     // Ensure final content is set for all created messages
     updateOpenResponsesChatStore((prev) => {
       let messages = prev.messages
-      for (const [, { id, content, kind }] of assistantMessages) {
+      for (const [outputIndex, { id, content, kind }] of assistantMessages) {
         const existing = messages.find((m) => m.id === id)
         const finalContent = content
+        const images = assistantImages.get(outputIndex) ?? []
+        const attachments =
+          images.length > 0
+            ? images.map((url) => ({ type: "image" as const, url }))
+            : undefined
         if (existing) {
           messages = messages.map((m) =>
-            m.id === id ? { ...m, content: finalContent } : m,
+            m.id === id
+              ? { ...m, content: finalContent, attachments }
+              : m,
           )
         } else {
           messages = [
@@ -154,6 +179,7 @@ export async function sendOpenResponsesChatMessage({
               role: "assistant",
               content: finalContent,
               kind,
+              attachments,
               timestamp: Date.now(),
             },
           ]

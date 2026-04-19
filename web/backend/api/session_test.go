@@ -1033,3 +1033,165 @@ func TestHandleSessions_IgnoresMetaJSONInLegacyFallback(t *testing.T) {
 		t.Fatalf("len(items) = %d, want 0", len(items))
 	}
 }
+
+func TestHandleGetSession_ResolvesSendFileImage(t *testing.T) {
+	configPath, cleanup := setupOAuthTestEnv(t)
+	defer cleanup()
+
+	dir := sessionsTestDir(t, configPath)
+	store, err := memory.NewJSONLStore(dir)
+	if err != nil {
+		t.Fatalf("NewJSONLStore() error = %v", err)
+	}
+
+	// Create a small PNG image in the workspace
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	workspace := cfg.Agents.Defaults.Workspace
+	if workspace == "" {
+		t.Fatal("workspace is empty")
+	}
+	imgPath := filepath.Join(workspace, "test_chart.png")
+	// Minimal valid PNG: 1x1 pixel, transparent
+	pngBytes := []byte{
+		0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+		0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
+		0x0D, 0x49, 0x44, 0x41, 0x54, 0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00,
+		0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x05, 0xFE, 0xD4, 0xFA, 0x00, 0x00,
+		0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+	}
+	if err := os.WriteFile(imgPath, pngBytes, 0o644); err != nil {
+		t.Fatalf("WriteFile(png) error = %v", err)
+	}
+	defer os.Remove(imgPath)
+
+	sessionKey := picoSessionPrefix + "detail-send-file-image"
+	for _, msg := range []providers.Message{
+		{Role: "user", Content: "show me the chart"},
+		{
+			Role: "assistant",
+			ToolCalls: []providers.ToolCall{
+				{
+					ID:   "call_1",
+					Type: "function",
+					Function: &providers.FunctionCall{
+						Name:      "send_file",
+						Arguments: `{"path":"test_chart.png","filename":"test_chart.png"}`,
+					},
+				},
+			},
+		},
+		{Role: "assistant", Content: "Here is the chart."},
+	} {
+		if err := store.AddFullMessage(nil, sessionKey, msg); err != nil {
+			t.Fatalf("AddFullMessage() error = %v", err)
+		}
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions/detail-send-file-image", nil)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp struct {
+		Messages []struct {
+			Role    string   `json:"role"`
+			Content string   `json:"content"`
+			Media   []string `json:"media,omitempty"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(resp.Messages) != 3 {
+		t.Fatalf("len(resp.Messages) = %d, want 3", len(resp.Messages))
+	}
+	if resp.Messages[0].Role != "user" || resp.Messages[0].Content != "show me the chart" {
+		t.Fatalf("first message = %#v, want user/show me the chart", resp.Messages[0])
+	}
+	if !strings.Contains(resp.Messages[1].Content, "`send_file`") {
+		t.Fatalf("tool summary message = %#v, want send_file summary", resp.Messages[1])
+	}
+	if len(resp.Messages[1].Media) != 1 {
+		t.Fatalf("tool summary media = %v, want 1 item", resp.Messages[1].Media)
+	}
+	if !strings.HasPrefix(resp.Messages[1].Media[0], "data:image/png;base64,") {
+		t.Fatalf("tool summary media[0] prefix = %q, want data:image/png;base64,...", resp.Messages[1].Media[0])
+	}
+	if resp.Messages[2].Role != "assistant" || resp.Messages[2].Content != "Here is the chart." {
+		t.Fatalf("final assistant message = %#v, want assistant/Here is the chart.", resp.Messages[2])
+	}
+}
+
+func TestHandleGetSession_SkipsMissingSendFileImage(t *testing.T) {
+	configPath, cleanup := setupOAuthTestEnv(t)
+	defer cleanup()
+
+	dir := sessionsTestDir(t, configPath)
+	store, err := memory.NewJSONLStore(dir)
+	if err != nil {
+		t.Fatalf("NewJSONLStore() error = %v", err)
+	}
+
+	sessionKey := picoSessionPrefix + "detail-send-file-missing"
+	for _, msg := range []providers.Message{
+		{Role: "user", Content: "show me the chart"},
+		{
+			Role: "assistant",
+			ToolCalls: []providers.ToolCall{
+				{
+					ID:   "call_1",
+					Type: "function",
+					Function: &providers.FunctionCall{
+						Name:      "send_file",
+						Arguments: `{"path":"nonexistent.png","filename":"nonexistent.png"}`,
+					},
+				},
+			},
+		},
+		{Role: "assistant", Content: "Here is the chart."},
+	} {
+		if err := store.AddFullMessage(nil, sessionKey, msg); err != nil {
+			t.Fatalf("AddFullMessage() error = %v", err)
+		}
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions/detail-send-file-missing", nil)
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp struct {
+		Messages []struct {
+			Role    string   `json:"role"`
+			Content string   `json:"content"`
+			Media   []string `json:"media,omitempty"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if len(resp.Messages) != 3 {
+		t.Fatalf("len(resp.Messages) = %d, want 3", len(resp.Messages))
+	}
+	if len(resp.Messages[1].Media) != 0 {
+		t.Fatalf("tool summary media = %v, want empty for missing file", resp.Messages[1].Media)
+	}
+}

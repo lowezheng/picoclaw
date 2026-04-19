@@ -204,6 +204,11 @@ func (c *OpenResponsesChannel) SendMedia(ctx context.Context, msg bus.OutboundMe
 		return nil, channels.ErrNotRunning
 	}
 
+	logger.DebugCF("openresponses", "SendMedia received", map[string]any{
+		"conversation_id": msg.ChatID,
+		"parts_count":     len(msg.Parts),
+	})
+
 	conversationID := msg.ChatID
 	if conversationID == "" {
 		return nil, nil

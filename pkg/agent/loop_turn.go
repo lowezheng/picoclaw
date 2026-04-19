@@ -842,6 +842,13 @@ turnLoop:
 								ChatID:  ts.chatID,
 								Parts:   parts,
 							}
+							logger.DebugCF("agent", "Hook sending media", map[string]any{
+								"agent_id":   ts.agent.ID,
+								"tool":       toolName,
+								"channel":    ts.channel,
+								"chat_id":    ts.chatID,
+								"parts_count": len(parts),
+							})
 							if al.channelManager != nil && ts.channel != "" && !constants.IsInternalChannel(ts.channel) {
 								if err := al.channelManager.SendMedia(ctx, outboundMedia); err != nil {
 									logger.WarnCF("agent", "Failed to deliver hook media",
@@ -1220,6 +1227,13 @@ turnLoop:
 					Scope:      outboundScopeFromSessionScope(ts.opts.Dispatch.SessionScope),
 					Parts:      parts,
 				}
+				logger.DebugCF("agent", "Tool sending media", map[string]any{
+					"agent_id":    ts.agent.ID,
+					"tool":        toolName,
+					"channel":     ts.channel,
+					"chat_id":     ts.chatID,
+					"parts_count": len(parts),
+				})
 				if al.channelManager != nil && ts.channel != "" && !constants.IsInternalChannel(ts.channel) {
 					if err := al.channelManager.SendMedia(ctx, outboundMedia); err != nil {
 						logger.WarnCF("agent", "Failed to deliver handled tool media",

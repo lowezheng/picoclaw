@@ -2,6 +2,7 @@ package api
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -414,7 +415,7 @@ func buildSessionListItem(sessionID string, sess sessionFile, toolFeedbackMaxArg
 	}
 	title := preview
 
-	validMessageCount := len(visibleSessionMessages(sess.Messages, toolFeedbackMaxArgsLength))
+	validMessageCount := len(visibleSessionMessages(sess.Messages, toolFeedbackMaxArgsLength, ""))
 
 	return sessionListItem{
 		ID:           sessionID,
@@ -455,7 +456,7 @@ func sessionMessagePreview(msg providers.Message) string {
 	return ""
 }
 
-func visibleSessionMessages(messages []providers.Message, toolFeedbackMaxArgsLength int) []sessionChatMessage {
+func visibleSessionMessages(messages []providers.Message, toolFeedbackMaxArgsLength int, workspace string) []sessionChatMessage {
 	transcript := make([]sessionChatMessage, 0, len(messages))
 
 	for _, msg := range messages {
@@ -476,7 +477,7 @@ func visibleSessionMessages(messages []providers.Message, toolFeedbackMaxArgsLen
 				continue
 			}
 
-			toolSummaryMessages := visibleAssistantToolSummaryMessages(msg.ToolCalls, toolFeedbackMaxArgsLength)
+			toolSummaryMessages := visibleAssistantToolSummaryMessages(msg.ToolCalls, toolFeedbackMaxArgsLength, workspace)
 			if len(toolSummaryMessages) > 0 {
 				transcript = append(transcript, toolSummaryMessages...)
 			}
@@ -515,9 +516,88 @@ func assistantMessageInternalOnly(msg providers.Message) bool {
 	return strings.TrimSpace(msg.Content) == handledToolResponseSummaryText
 }
 
+func resolveWorkspace(configPath string) string {
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		return ""
+	}
+	ws := cfg.Agents.Defaults.Workspace
+	if ws == "" {
+		home, _ := os.UserHomeDir()
+		ws = filepath.Join(home, ".picoclaw", "workspace")
+	}
+	if len(ws) > 0 && ws[0] == '~' {
+		home, _ := os.UserHomeDir()
+		if len(ws) > 1 && ws[1] == '/' {
+			ws = home + ws[1:]
+		} else {
+			ws = home
+		}
+	}
+	return ws
+}
+
+func resolveSendFilePath(workspace, path string) string {
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path)
+	}
+	if workspace == "" {
+		home, _ := os.UserHomeDir()
+		workspace = filepath.Join(home, ".picoclaw", "workspace")
+	}
+	absWorkspace, _ := filepath.Abs(workspace)
+	absPath, _ := filepath.Abs(filepath.Join(absWorkspace, path))
+	return absPath
+}
+
+func imageMimeFromExt(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".bmp":
+		return "image/bmp"
+	case ".svg":
+		return "image/svg+xml"
+	default:
+		return ""
+	}
+}
+
+func encodeSendFileImage(workspace, argsJSON string) string {
+	var args struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return ""
+	}
+	if strings.TrimSpace(args.Path) == "" {
+		return ""
+	}
+
+	resolved := resolveSendFilePath(workspace, args.Path)
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		return ""
+	}
+
+	mime := imageMimeFromExt(resolved)
+	if mime == "" {
+		return ""
+	}
+
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
+}
+
 func visibleAssistantToolSummaryMessages(
 	toolCalls []providers.ToolCall,
 	toolFeedbackMaxArgsLength int,
+	workspace string,
 ) []sessionChatMessage {
 	if len(toolCalls) == 0 {
 		return nil
@@ -552,9 +632,17 @@ func visibleAssistantToolSummaryMessages(
 			argsPreview = "{}"
 		}
 
+		var media []string
+		if name == "send_file" && workspace != "" {
+			if dataURL := encodeSendFileImage(workspace, argsJSON); dataURL != "" {
+				media = append(media, dataURL)
+			}
+		}
+
 		messages = append(messages, sessionChatMessage{
 			Role:    "assistant",
 			Content: utils.FormatToolFeedbackMessage(name, utils.Truncate(argsPreview, toolFeedbackMaxArgsLength)),
+			Media:   media,
 		})
 	}
 
@@ -761,7 +849,8 @@ func (h *Handler) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	messages := visibleSessionMessages(sess.Messages, toolFeedbackMaxArgsLength)
+	workspace := resolveWorkspace(h.configPath)
+	messages := visibleSessionMessages(sess.Messages, toolFeedbackMaxArgsLength, workspace)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{

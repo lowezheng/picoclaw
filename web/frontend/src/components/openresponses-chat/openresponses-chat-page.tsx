@@ -325,6 +325,7 @@ export function OpenResponsesChatPage() {
                       content={msg.content}
                       isThought={msg.kind === "thought"}
                       timestamp={msg.timestamp}
+                      attachments={msg.attachments}
                     />
                   )
                 ) : (
