@@ -358,7 +358,7 @@ turnLoop:
 			map[string]any{
 				"iteration":     iteration,
 				"messages_json": formatMessagesForLog(callMessages),
-				"tools_json":    formatToolsForLog(providerToolDefs),
+				//"tools_json":    formatToolsForLog(providerToolDefs),
 			})
 
 		callLLM := func(messagesForCall []providers.Message, toolDefsForCall []providers.ToolDefinition) (*providers.LLMResponse, error) {
@@ -897,10 +897,10 @@ turnLoop:
 								Parts:   parts,
 							}
 							logger.DebugCF("agent", "Hook sending media", map[string]any{
-								"agent_id":   ts.agent.ID,
-								"tool":       toolName,
-								"channel":    ts.channel,
-								"chat_id":    ts.chatID,
+								"agent_id":    ts.agent.ID,
+								"tool":        toolName,
+								"channel":     ts.channel,
+								"chat_id":     ts.chatID,
 								"parts_count": len(parts),
 							})
 							if al.channelManager != nil && ts.channel != "" && !constants.IsInternalChannel(ts.channel) {
@@ -1601,13 +1601,45 @@ func (al *AgentLoop) callLLMStream(
 ) (*providers.LLMResponse, error) {
 	var content strings.Builder
 	var lastReasoning string
-	var contentStarted bool
-
+	var lastReasoningLen int
+	var lastContentLen int
+	var contentChunks = 0
+	var reasoningChunks = 0
 	resp, err := sp.ChatStream(ctx, messages, toolDefs, model, opts,
 		func(accumulated, reasoning string) {
-			// Publish content first; once content starts, stop streaming
-			// reasoning to avoid broken interleaved bubbles.
+			if reasoning != "" {
+				reasoningChunks++
+				if reasoningChunks <= 5 || reasoningChunks%10 == 0 {
+					logger.InfoCF("LLM", fmt.Sprintf("[reasoning chunk %3d: %4d] %q", reasoningChunks, len(reasoning), reasoning), nil)
+				}
+			}
 			if accumulated != "" {
+				contentChunks++
+				if contentChunks <= 5 || contentChunks%10 == 0 {
+					logger.InfoCF("LLM", fmt.Sprintf("[content chunk %3d: %4d]  %q", contentChunks, len(accumulated), accumulated), nil)
+				}
+			}
+
+			// reasoning: only push when it actually grows
+			if len(reasoning) > lastReasoningLen {
+				delta := reasoning
+				if lastReasoningLen > 0 && strings.HasPrefix(reasoning, lastReasoning) {
+					delta = reasoning[lastReasoningLen:]
+				}
+				lastReasoning = reasoning
+				lastReasoningLen = len(reasoning)
+				outCtx, outCancel := context.WithTimeout(ctx, 3*time.Second)
+				_ = al.bus.PublishOutbound(outCtx, bus.OutboundMessage{
+					Channel: channel,
+					ChatID:  chatID,
+					Content: delta,
+					Context: bus.InboundContext{Raw: map[string]string{"message_kind": "thought"}},
+				})
+				outCancel()
+			}
+
+			// content: only push when it actually grows
+			if len(accumulated) > lastContentLen {
 				if updateErr := streamer.Update(ctx, accumulated); updateErr != nil {
 					logger.DebugCF("agent", "streamer update failed", map[string]any{
 						"error": updateErr.Error(),
@@ -1616,28 +1648,7 @@ func (al *AgentLoop) callLLMStream(
 				if len(accumulated) > content.Len() {
 					content.WriteString(accumulated[content.Len():])
 				}
-				if content.Len() > 0 {
-					contentStarted = true
-				}
-			}
-			// Stream reasoning only during the "reasoning-only" phase
-			// (before any content has been emitted). Once content starts,
-			// the remaining reasoning will be published in full by runTurn
-			// at the end of the turn.
-			if !contentStarted && reasoning != "" && reasoning != lastReasoning {
-				newReasoning := reasoning
-				if len(lastReasoning) > 0 && strings.HasPrefix(reasoning, lastReasoning) {
-					newReasoning = reasoning[len(lastReasoning):]
-				}
-				lastReasoning = reasoning
-				outCtx, outCancel := context.WithTimeout(ctx, 3*time.Second)
-				_ = al.bus.PublishOutbound(outCtx, bus.OutboundMessage{
-					Channel: channel,
-					ChatID:  chatID,
-					Content: newReasoning,
-					Context: bus.InboundContext{Raw: map[string]string{"message_kind": "thought"}},
-				})
-				outCancel()
+				lastContentLen = len(accumulated)
 			}
 		},
 	)
