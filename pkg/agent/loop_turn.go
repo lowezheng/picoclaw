@@ -732,6 +732,31 @@ turnLoop:
 			ts.ingestMessage(turnCtx, al, assistantMsg)
 		}
 
+		// Publish function_call events to the openresponses channel so SSE
+		// streams emit proper function_call output items per the spec.
+		if ts.channel == "openresponses" && al.bus != nil && len(normalizedToolCalls) > 0 {
+			pubCtx, pubCancel := context.WithTimeout(turnCtx, 3*time.Second)
+			for _, tc := range normalizedToolCalls {
+				argsJSON, _ := json.Marshal(tc.Arguments)
+				_ = al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
+					Channel: ts.channel,
+					ChatID:  ts.chatID,
+					Context: bus.InboundContext{
+						Channel: ts.channel,
+						ChatID:  ts.chatID,
+						Raw: map[string]string{
+							metadataKeyMessageKind: messageKindFunctionCall,
+							"call_id":              tc.ID,
+							"name":                 tc.Name,
+							"arguments":            string(argsJSON),
+						},
+					},
+					Content: "",
+				})
+			}
+			pubCancel()
+		}
+
 		ts.setPhase(TurnPhaseTools)
 		for i, tc := range normalizedToolCalls {
 			if ts.hardAbortRequested() {

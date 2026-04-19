@@ -238,7 +238,7 @@ All items share these required fields: `id`, `type`, `status`.
   "content": [{ "type": "output_text", "text": "..." }],
   "encrypted_content": null,
   "summary": [{ "type": "summary_text", "text": "..." }]
-}xu
+}
 ```
 
 > Extension rule: New item types must be prefixed with the implementor slug, e.g. `openai:web_search_call`.

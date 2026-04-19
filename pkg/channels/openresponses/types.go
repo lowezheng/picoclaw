@@ -86,9 +86,10 @@ type ResponseItem struct {
 
 // Content is a polymorphic content block inside a message or reasoning item.
 type Content struct {
-	Type     string `json:"type"` // "output_text" | "output_image" | "reasoning_text"
-	Text     string `json:"text,omitempty"`
-	ImageURL string `json:"image_url,omitempty"` // NEW
+	Type      string `json:"type"` // "output_text" | "output_image" | "reasoning_text" | "function_call_arguments"
+	Text      string `json:"text,omitempty"`
+	ImageURL  string `json:"image_url,omitempty"`  // NEW
+	Arguments string `json:"arguments,omitempty"`  // NEW: for function_call_arguments
 }
 
 // --- SSE Event Types ---
@@ -172,18 +173,22 @@ func normalizeInput(input any) string {
 type streamEventKind string
 
 const (
-	eventKindText      streamEventKind = "text"
-	eventKindReasoning streamEventKind = "reasoning"
-	eventKindImage     streamEventKind = "image" // NEW
-	eventKindTurnEnd   streamEventKind = "turn_end"
+	eventKindText         streamEventKind = "text"
+	eventKindReasoning    streamEventKind = "reasoning"
+	eventKindImage        streamEventKind = "image"        // NEW
+	eventKindFunctionCall streamEventKind = "function_call" // NEW
+	eventKindTurnEnd      streamEventKind = "turn_end"
 )
 
 // streamEvent represents one piece of agent output in the stream.
 type streamEvent struct {
-	kind     streamEventKind
-	content  string
-	imageURL string // NEW: base64 data URL for output_image
-	caption  string // NEW: optional caption text
+	kind      streamEventKind
+	content   string
+	imageURL  string // NEW: base64 data URL for output_image
+	caption   string // NEW: optional caption text
+	callID    string // NEW: for function_call
+	name      string // NEW: for function_call
+	arguments string // NEW: for function_call
 }
 
 // pendingStream holds a queue of agent messages for a single HTTP request.

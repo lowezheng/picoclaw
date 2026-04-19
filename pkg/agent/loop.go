@@ -113,6 +113,7 @@ const (
 	metadataKeyMessageKind     = "message_kind"
 	messageKindThought         = "thought"
 	messageKindTurnEnd         = "turn_end"
+	messageKindFunctionCall    = "function_call"
 	metadataKeyAccountID       = "account_id"
 	metadataKeyGuildID         = "guild_id"
 	metadataKeyTeamID          = "team_id"

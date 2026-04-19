@@ -935,3 +935,128 @@ func TestServeHTTPJSONResponseTextThenImageThenText(t *testing.T) {
 		t.Errorf("expected 'After', got %s", resp.Output[2].Content[0].Text)
 	}
 }
+
+func TestWriteJSONResponseWithStream_FunctionCall(t *testing.T) {
+	ch, _ := newTestChannel(t, "secret")
+	defer ch.Stop(context.Background())
+
+	stream := newPendingStream(10)
+	stream.push(streamEvent{
+		kind:      eventKindFunctionCall,
+		callID:    "call_abc123",
+		name:      "get_weather",
+		arguments: `{"city":"Beijing"}`,
+	})
+	stream.close()
+
+	rr := httptest.NewRecorder()
+	ch.writeJSONResponseWithStream(rr, stream, "resp_1", "msg_1", "conv_1", "")
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var resp Response
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if len(resp.Output) != 1 {
+		t.Fatalf("expected 1 output item, got %d", len(resp.Output))
+	}
+	item := resp.Output[0]
+	if item.Type != "function_call" {
+		t.Errorf("expected type 'function_call', got %s", item.Type)
+	}
+	if item.Status != "completed" {
+		t.Errorf("expected status 'completed', got %s", item.Status)
+	}
+	if item.CallID != "call_abc123" {
+		t.Errorf("expected call_id 'call_abc123', got %s", item.CallID)
+	}
+	if item.Name != "get_weather" {
+		t.Errorf("expected name 'get_weather', got %s", item.Name)
+	}
+	if item.Arguments != `{"city":"Beijing"}` {
+		t.Errorf("expected arguments '{\"city\":\"Beijing\"}', got %s", item.Arguments)
+	}
+}
+
+func TestWriteSSEResponseStream_FunctionCall(t *testing.T) {
+	ch, _ := newTestChannel(t, "secret")
+	defer ch.Stop(context.Background())
+
+	stream := newPendingStream(10)
+	stream.push(streamEvent{
+		kind:      eventKindFunctionCall,
+		callID:    "call_def456",
+		name:      "search_web",
+		arguments: `{"query":"golang"}`,
+	})
+	stream.close()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ch.writeSSEResponseStream(rr, req, stream, "resp_1", "msg_1", "conv_1", "")
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	body := rr.Body.String()
+	required := []string{
+		`"type":"function_call"`,
+		`"call_id":"call_def456"`,
+		`"name":"search_web"`,
+		`"arguments":"{\"query\":\"golang\"}"`,
+		"event: response.function_call_arguments.delta",
+		"event: response.function_call_arguments.done",
+		"event: response.completed",
+		"data: [DONE]",
+	}
+	for _, s := range required {
+		if !strings.Contains(body, s) {
+			t.Errorf("SSE response missing: %s", s)
+		}
+	}
+
+	// Verify output_item.added has status "in_progress" and correct type.
+	var addedEvent ResponseEvent
+	lines := strings.Split(body, "\n")
+	for i := 0; i < len(lines); i++ {
+		if strings.Contains(lines[i], "event: response.output_item.added") && i+1 < len(lines) {
+			data := strings.TrimPrefix(lines[i+1], "data: ")
+			if err := json.Unmarshal([]byte(data), &addedEvent); err == nil {
+				break
+			}
+		}
+	}
+	if addedEvent.Item.Type != "function_call" {
+		t.Errorf("expected output_item.added type 'function_call', got %s", addedEvent.Item.Type)
+	}
+	if addedEvent.Item.Status != "in_progress" {
+		t.Errorf("expected output_item.added status 'in_progress', got %s", addedEvent.Item.Status)
+	}
+	if addedEvent.Item.CallID != "call_def456" {
+		t.Errorf("expected call_id 'call_def456', got %s", addedEvent.Item.CallID)
+	}
+	if addedEvent.Item.Name != "search_web" {
+		t.Errorf("expected name 'search_web', got %s", addedEvent.Item.Name)
+	}
+
+	// Verify output_item.done has status "completed" and arguments.
+	var doneEvent ResponseEvent
+	for i := 0; i < len(lines); i++ {
+		if strings.Contains(lines[i], "event: response.output_item.done") && i+1 < len(lines) {
+			data := strings.TrimPrefix(lines[i+1], "data: ")
+			if err := json.Unmarshal([]byte(data), &doneEvent); err == nil {
+				break
+			}
+		}
+	}
+	if doneEvent.Item.Status != "completed" {
+		t.Errorf("expected output_item.done status 'completed', got %s", doneEvent.Item.Status)
+	}
+	if doneEvent.Item.Arguments != `{"query":"golang"}` {
+		t.Errorf("expected arguments '{\"query\":\"golang\"}', got %s", doneEvent.Item.Arguments)
+	}
+}

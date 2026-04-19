@@ -173,6 +173,17 @@ func (c *OpenResponsesChannel) writeJSONResponseWithStream(
 					{Type: "output_image", ImageURL: ev.imageURL},
 				},
 			})
+		case eventKindFunctionCall:
+			itemID := fmt.Sprintf("%s_%d", msgID, msgSeq)
+			msgSeq++
+			outputItems = append(outputItems, ResponseItem{
+				Type:      "function_call",
+				ID:        itemID,
+				Status:    "completed",
+				CallID:    ev.callID,
+				Name:      ev.name,
+				Arguments: ev.arguments,
+			})
 		}
 	}
 
@@ -513,6 +524,91 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 				SequenceNumber: seq,
 				OutputIndex:    len(outputItems),
 				Item:           stripImageURLsFromItem(doneItem),
+			})
+			seq++
+			flushAndExtend()
+
+			outputItems = append(outputItems, doneItem)
+
+		case eventKindFunctionCall:
+			// --- function_call item sequence (discrete, no deltas) ---
+			addedItem := ResponseItem{
+				Type:     "function_call",
+				ID:       itemID,
+				Status:   "in_progress",
+				CallID:   ev.callID,
+				Name:     ev.name,
+			}
+			writeSSEEvent(w, "response.output_item.added", ResponseEvent{
+				Type:           "response.output_item.added",
+				SequenceNumber: seq,
+				OutputIndex:    len(outputItems),
+				Item:           addedItem,
+			})
+			seq++
+			flushAndExtend()
+
+			// response.content_part.added
+			writeSSEEvent(w, "response.content_part.added", ResponseEvent{
+				Type:           "response.content_part.added",
+				SequenceNumber: seq,
+				ItemID:         itemID,
+				OutputIndex:    len(outputItems),
+				ContentIndex:   0,
+				Part:           Content{Type: "function_call_arguments", Arguments: ""},
+			})
+			seq++
+			flushAndExtend()
+
+			// response.function_call_arguments.delta
+			writeSSEEvent(w, "response.function_call_arguments.delta", ResponseEvent{
+				Type:           "response.function_call_arguments.delta",
+				SequenceNumber: seq,
+				ItemID:         itemID,
+				OutputIndex:    len(outputItems),
+				ContentIndex:   0,
+				Delta:          ev.arguments,
+			})
+			seq++
+			flushAndExtend()
+
+			// response.function_call_arguments.done
+			writeSSEEvent(w, "response.function_call_arguments.done", ResponseEvent{
+				Type:           "response.function_call_arguments.done",
+				SequenceNumber: seq,
+				ItemID:         itemID,
+				OutputIndex:    len(outputItems),
+				ContentIndex:   0,
+			})
+			seq++
+			flushAndExtend()
+
+			// response.content_part.done
+			writeSSEEvent(w, "response.content_part.done", ResponseEvent{
+				Type:           "response.content_part.done",
+				SequenceNumber: seq,
+				ItemID:         itemID,
+				OutputIndex:    len(outputItems),
+				ContentIndex:   0,
+				Part:           Content{Type: "function_call_arguments", Arguments: ev.arguments},
+			})
+			seq++
+			flushAndExtend()
+
+			// response.output_item.done
+			doneItem := ResponseItem{
+				Type:      "function_call",
+				ID:        itemID,
+				Status:    "completed",
+				CallID:    ev.callID,
+				Name:      ev.name,
+				Arguments: ev.arguments,
+			}
+			writeSSEEvent(w, "response.output_item.done", ResponseEvent{
+				Type:           "response.output_item.done",
+				SequenceNumber: seq,
+				OutputIndex:    len(outputItems),
+				Item:           doneItem,
 			})
 			seq++
 			flushAndExtend()

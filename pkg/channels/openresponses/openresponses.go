@@ -125,6 +125,13 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 
 	if raw["message_kind"] == "thought" {
 		ev = streamEvent{kind: eventKindReasoning, content: msg.Content}
+	} else if raw["message_kind"] == "function_call" {
+		ev = streamEvent{
+			kind:      eventKindFunctionCall,
+			callID:    raw["call_id"],
+			name:      raw["name"],
+			arguments: raw["arguments"],
+		}
 	} else {
 		ev = streamEvent{kind: eventKindText, content: msg.Content}
 	}
