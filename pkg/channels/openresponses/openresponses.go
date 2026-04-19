@@ -3,6 +3,7 @@ package openresponses
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -109,7 +110,14 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 		return nil, nil
 	}
 
+	// If a streamer is active (streaming mode), skip the full-text message
+	// because it has already been delivered incrementally via Update().
+	// Allow thought/function_call/image events through.
 	raw := msg.Context.Raw
+	if st.active.Load() && raw["message_kind"] != "thought" && raw["message_kind"] != "function_call" {
+		return nil, nil
+	}
+
 	var ev streamEvent
 
 	if raw["message_kind"] == "turn_end" {
@@ -327,4 +335,52 @@ func (c *OpenResponsesChannel) endpointPath() string {
 		return "/v1/responses"
 	}
 	return p
+}
+
+// BeginStream implements channels.StreamingCapable.
+// It returns a Streamer that pushes incremental deltas into the conversation's pendingStream.
+func (c *OpenResponsesChannel) BeginStream(ctx context.Context, chatID string) (channels.Streamer, error) {
+	c.convMu.Lock()
+	st, found := c.convs[chatID]
+	c.convMu.Unlock()
+
+	if !found {
+		return nil, fmt.Errorf("no active conversation for %s", chatID)
+	}
+
+	return &openResponsesStreamer{
+		channel: c,
+		convID:  chatID,
+		stream:  st.stream,
+	}, nil
+}
+
+// openResponsesStreamer bridges bus.Streamer to pendingStream.
+type openResponsesStreamer struct {
+	channel     *OpenResponsesChannel
+	convID      string
+	stream      *pendingStream
+	lastContent string
+}
+
+func (s *openResponsesStreamer) Update(ctx context.Context, accumulated string) error {
+	if len(accumulated) <= len(s.lastContent) {
+		return nil
+	}
+	delta := accumulated[len(s.lastContent):]
+	s.lastContent = accumulated
+
+	// Push delta (not accumulated) so handler emits true incremental SSE
+	s.stream.push(streamEvent{kind: eventKindTextDelta, content: delta})
+	return nil
+}
+
+func (s *openResponsesStreamer) Finalize(ctx context.Context, content string) error {
+	// Signal turn end so handler can close the active output_item
+	s.stream.push(streamEvent{kind: eventKindTurnEnd})
+	return nil
+}
+
+func (s *openResponsesStreamer) Cancel(ctx context.Context) {
+	s.stream.close()
 }

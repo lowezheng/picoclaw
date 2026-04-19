@@ -64,7 +64,7 @@ curl -N -v -X POST http://localhost:18790/v1/responses \
   -H "Authorization: Bearer 570694ff7910121aaf9feea5f42e6263" \
   -H "Content-Type: application/json" \
   -d '{
-    "input": "查询我管理的产品，产品代码：DD0108，组合代码：7000000 ",
+    "input": "为用户建立一个自动化的周报生成系统",
     "stream": true
   }'
 ```

@@ -174,6 +174,7 @@ type streamEventKind string
 
 const (
 	eventKindText         streamEventKind = "text"
+	eventKindTextDelta    streamEventKind = "text_delta"    // incremental text token
 	eventKindReasoning    streamEventKind = "reasoning"
 	eventKindImage        streamEventKind = "image"        // NEW
 	eventKindFunctionCall streamEventKind = "function_call" // NEW

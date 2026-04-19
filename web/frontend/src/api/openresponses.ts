@@ -179,9 +179,9 @@ export async function sendOpenResponsesMessage(
         try {
           const parsedJSON = JSON.parse(parsedBlock.data) as { output_index?: number; delta?: string }
           if (typeof parsedJSON.output_index === "number" && typeof parsedJSON.delta === "string") {
-            // NOTE: OpenResponses channel sends the complete text in each
-            // delta (not incremental chunks), so replace rather than append.
-            outputTexts[parsedJSON.output_index] = parsedJSON.delta
+            // Incremental delta — append rather than replace.
+            const existing = outputTexts[parsedJSON.output_index] ?? ""
+            outputTexts[parsedJSON.output_index] = existing + parsedJSON.delta
             onStreamEvent?.({
               type: "delta",
               outputIndex: parsedJSON.output_index,

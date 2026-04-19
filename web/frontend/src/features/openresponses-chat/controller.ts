@@ -83,6 +83,10 @@ export async function sendOpenResponsesChatMessage({
       },
       (event) => {
         if (event.type === "item_added" && typeof event.outputIndex === "number") {
+          // function_call items have no displayable text; skip them to avoid empty bubbles.
+          if (event.itemType === "function_call") {
+            return
+          }
           if (!assistantMessages.has(event.outputIndex)) {
             const msgId = `resp-${Date.now()}-${event.outputIndex}`
             const kind = event.itemType === "reasoning" ? "thought" : undefined
@@ -101,16 +105,15 @@ export async function sendOpenResponsesChatMessage({
             }))
           }
         } else if (event.type === "delta" && typeof event.outputIndex === "number" && event.delta) {
-          // Delta contains the complete text (not incremental chunks).
+          // Incremental delta — append rather than replace.
           let msg = assistantMessages.get(event.outputIndex)
           if (!msg) {
             const msgId = `resp-${Date.now()}-${event.outputIndex}`
             const kind = event.itemType === "reasoning" ? "thought" : undefined
-            msg = { id: msgId, content: event.delta, kind }
+            msg = { id: msgId, content: "", kind }
             assistantMessages.set(event.outputIndex, msg)
-          } else {
-            msg.content = event.delta
           }
+          msg.content += event.delta
           updateOpenResponsesChatStore((prev) => {
             const existing = prev.messages.find((m) => m.id === msg!.id)
             if (existing) {

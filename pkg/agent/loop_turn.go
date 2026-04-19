@@ -365,6 +365,16 @@ turnLoop:
 			al.activeRequests.Add(1)
 			defer al.activeRequests.Done()
 
+			// Streaming branch: only when explicitly enabled, single candidate,
+			// provider implements StreamingProvider, and channel has an active Streamer.
+			if al.cfg.Agents.Defaults.StreamResponse && len(activeCandidates) <= 1 {
+				if sp, ok := activeProvider.(providers.StreamingProvider); ok {
+					if streamer, ok := al.bus.GetStreamer(providerCtx, ts.channel, ts.chatID); ok && streamer != nil {
+						return al.callLLMStream(providerCtx, sp, streamer, messagesForCall, toolDefsForCall, llmModel, llmOpts)
+					}
+				}
+			}
+
 			if len(activeCandidates) > 1 && al.fallback != nil {
 				fbResult, fbErr := al.fallback.Execute(
 					providerCtx,
@@ -638,21 +648,24 @@ turnLoop:
 		logger.DebugCF("agent", "LLM response", llmResponseFields)
 
 		if al.bus != nil && ts.channel == "pico" && len(response.ToolCalls) > 0 && ts.opts.AllowInterimPicoPublish {
-			if strings.TrimSpace(response.Content) != "" {
-				outCtx, outCancel := context.WithTimeout(turnCtx, 3*time.Second)
-				err := al.bus.PublishOutbound(outCtx, bus.OutboundMessage{
-					Channel: ts.channel,
-					ChatID:  ts.chatID,
-					Content: response.Content,
-				})
-				outCancel()
-				if err != nil {
-					logger.WarnCF("agent", "Failed to publish pico interim tool-call content", map[string]any{
-						"error":     err.Error(),
-						"channel":   ts.channel,
-						"chat_id":   ts.chatID,
-						"iteration": iteration,
+			// Skip interim publish when streaming: content already pushed via Streamer in real time
+			if _, isStreaming := al.bus.GetStreamer(turnCtx, ts.channel, ts.chatID); !isStreaming {
+				if strings.TrimSpace(response.Content) != "" {
+					outCtx, outCancel := context.WithTimeout(turnCtx, 3*time.Second)
+					err := al.bus.PublishOutbound(outCtx, bus.OutboundMessage{
+						Channel: ts.channel,
+						ChatID:  ts.chatID,
+						Content: response.Content,
 					})
+					outCancel()
+					if err != nil {
+						logger.WarnCF("agent", "Failed to publish pico interim tool-call content", map[string]any{
+							"error":     err.Error(),
+							"channel":   ts.channel,
+							"chat_id":   ts.chatID,
+							"iteration": iteration,
+						})
+					}
 				}
 			}
 		}
@@ -1555,6 +1568,49 @@ func (al *AgentLoop) abortTurn(ts *turnState) (turnResult, error) {
 		}
 	}
 	return turnResult{status: TurnEndStatusAborted}, nil
+}
+
+// callLLMStream attempts a streaming LLM call when both provider and channel support it.
+// onChunk pushes accumulated text to the streamer in real time.
+// The returned LLMResponse has the fully assembled content.
+func (al *AgentLoop) callLLMStream(
+	ctx context.Context,
+	sp providers.StreamingProvider,
+	streamer bus.Streamer,
+	messages []providers.Message,
+	toolDefs []providers.ToolDefinition,
+	model string,
+	opts map[string]any,
+) (*providers.LLMResponse, error) {
+	var content strings.Builder
+
+	resp, err := sp.ChatStream(ctx, messages, toolDefs, model, opts,
+		func(accumulated string) {
+			if updateErr := streamer.Update(ctx, accumulated); updateErr != nil {
+				logger.DebugCF("agent", "streamer update failed", map[string]any{
+					"error": updateErr.Error(),
+				})
+			}
+			content.WriteString(accumulated)
+		},
+	)
+	if err != nil {
+		streamer.Cancel(ctx)
+		return nil, err
+	}
+
+	// Defensive: ensure resp.Content matches what was actually streamed
+	if resp != nil && content.Len() > 0 {
+		resp.Content = content.String()
+	}
+
+	if finalizeErr := streamer.Finalize(ctx, resp.Content); finalizeErr != nil {
+		logger.DebugCF("agent", "streamer finalize failed", map[string]any{
+			"error": finalizeErr.Error(),
+		})
+	}
+
+	return resp, nil
 }
 
 func (al *AgentLoop) selectCandidates(

@@ -294,17 +294,123 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 
 	// Read stream events and emit SSE events.
 	msgSeq := 0
-	for ev := range stream.events {
-		if ev.kind == eventKindTurnEnd {
-			continue
+	var (
+		hasActiveTextItem    bool
+		activeTextItemID     string
+		activeTextItemIndex  int
+		lastTextContent      string
+	)
+
+	// closeActiveTextItem finalizes an in-progress streaming text item.
+	closeActiveTextItem := func() {
+		if !hasActiveTextItem {
+			return
 		}
+		// response.output_text.done
+		writeSSEEvent(w, "response.output_text.done", ResponseEvent{
+			Type:           "response.output_text.done",
+			SequenceNumber: seq,
+			ItemID:         activeTextItemID,
+			OutputIndex:    activeTextItemIndex,
+			ContentIndex:   0,
+		})
+		seq++
+		flushAndExtend()
 
-		itemID := fmt.Sprintf("%s_%d", msgID, msgSeq)
-		msgSeq++
+		// response.content_part.done
+		writeSSEEvent(w, "response.content_part.done", ResponseEvent{
+			Type:           "response.content_part.done",
+			SequenceNumber: seq,
+			ItemID:         activeTextItemID,
+			OutputIndex:    activeTextItemIndex,
+			ContentIndex:   0,
+			Part:           Content{Type: "output_text", Text: lastTextContent},
+		})
+		seq++
+		flushAndExtend()
 
+		// response.output_item.done
+		doneItem := ResponseItem{
+			Type:    "message",
+			ID:      activeTextItemID,
+			Status:  "completed",
+			Role:    "assistant",
+			Content: []Content{{Type: "output_text", Text: lastTextContent}},
+		}
+		writeSSEEvent(w, "response.output_item.done", ResponseEvent{
+			Type:           "response.output_item.done",
+			SequenceNumber: seq,
+			OutputIndex:    activeTextItemIndex,
+			Item:           doneItem,
+		})
+		seq++
+		flushAndExtend()
+
+		outputItems = append(outputItems, doneItem)
+		hasActiveTextItem = false
+	}
+
+	for ev := range stream.events {
 		switch ev.kind {
+		case eventKindTurnEnd:
+			closeActiveTextItem()
+			continue
+
+		case eventKindTextDelta:
+			if !hasActiveTextItem {
+				activeTextItemID = fmt.Sprintf("%s_%d", msgID, msgSeq)
+				activeTextItemIndex = len(outputItems)
+				msgSeq++
+				hasActiveTextItem = true
+				lastTextContent = ""
+
+				addedItem := ResponseItem{
+					Type:    "message",
+					ID:      activeTextItemID,
+					Status:  "in_progress",
+					Role:    "assistant",
+					Content: []Content{},
+				}
+				writeSSEEvent(w, "response.output_item.added", ResponseEvent{
+					Type:           "response.output_item.added",
+					SequenceNumber: seq,
+					OutputIndex:    activeTextItemIndex,
+					Item:           addedItem,
+				})
+				seq++
+				flushAndExtend()
+
+				writeSSEEvent(w, "response.content_part.added", ResponseEvent{
+					Type:           "response.content_part.added",
+					SequenceNumber: seq,
+					ItemID:         activeTextItemID,
+					OutputIndex:    activeTextItemIndex,
+					ContentIndex:   0,
+					Part:           Content{Type: "output_text", Text: ""},
+				})
+				seq++
+				flushAndExtend()
+			}
+
+			lastTextContent += ev.content
+			writeSSEEvent(w, "response.output_text.delta", ResponseEvent{
+				Type:           "response.output_text.delta",
+				SequenceNumber: seq,
+				ItemID:         activeTextItemID,
+				OutputIndex:    activeTextItemIndex,
+				ContentIndex:   0,
+				Delta:          ev.content,
+			})
+			seq++
+			flushAndExtend()
+			continue
+
 		case eventKindText:
-			// --- text item sequence ---
+			closeActiveTextItem()
+
+			itemID := fmt.Sprintf("%s_%d", msgID, msgSeq)
+			msgSeq++
+
 			addedItem := ResponseItem{
 				Type:    "message",
 				ID:      itemID,
@@ -321,7 +427,6 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			seq++
 			flushAndExtend()
 
-			// response.content_part.added
 			writeSSEEvent(w, "response.content_part.added", ResponseEvent{
 				Type:           "response.content_part.added",
 				SequenceNumber: seq,
@@ -333,7 +438,6 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			seq++
 			flushAndExtend()
 
-			// response.output_text.delta
 			writeSSEEvent(w, "response.output_text.delta", ResponseEvent{
 				Type:           "response.output_text.delta",
 				SequenceNumber: seq,
@@ -345,7 +449,6 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			seq++
 			flushAndExtend()
 
-			// response.output_text.done
 			writeSSEEvent(w, "response.output_text.done", ResponseEvent{
 				Type:           "response.output_text.done",
 				SequenceNumber: seq,
@@ -356,7 +459,6 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			seq++
 			flushAndExtend()
 
-			// response.content_part.done
 			writeSSEEvent(w, "response.content_part.done", ResponseEvent{
 				Type:           "response.content_part.done",
 				SequenceNumber: seq,
@@ -368,7 +470,6 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			seq++
 			flushAndExtend()
 
-			// response.output_item.done
 			doneItem := ResponseItem{
 				Type:    "message",
 				ID:      itemID,
@@ -388,7 +489,11 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			outputItems = append(outputItems, doneItem)
 
 		case eventKindReasoning:
-			// --- reasoning item sequence ---
+			closeActiveTextItem()
+
+			itemID := fmt.Sprintf("%s_%d", msgID, msgSeq)
+			msgSeq++
+
 			addedItem := ResponseItem{
 				Type:    "reasoning",
 				ID:      itemID,
@@ -404,7 +509,6 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			seq++
 			flushAndExtend()
 
-			// response.content_part.added
 			writeSSEEvent(w, "response.content_part.added", ResponseEvent{
 				Type:           "response.content_part.added",
 				SequenceNumber: seq,
@@ -416,7 +520,6 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			seq++
 			flushAndExtend()
 
-			// response.reasoning_text.delta
 			writeSSEEvent(w, "response.reasoning_text.delta", ResponseEvent{
 				Type:           "response.reasoning_text.delta",
 				SequenceNumber: seq,
@@ -428,7 +531,6 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			seq++
 			flushAndExtend()
 
-			// response.reasoning_text.done
 			writeSSEEvent(w, "response.reasoning_text.done", ResponseEvent{
 				Type:           "response.reasoning_text.done",
 				SequenceNumber: seq,
@@ -439,7 +541,6 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			seq++
 			flushAndExtend()
 
-			// response.content_part.done
 			writeSSEEvent(w, "response.content_part.done", ResponseEvent{
 				Type:           "response.content_part.done",
 				SequenceNumber: seq,
@@ -451,7 +552,6 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			seq++
 			flushAndExtend()
 
-			// response.output_item.done
 			doneItem := ResponseItem{
 				Type:    "reasoning",
 				ID:      itemID,
@@ -470,7 +570,11 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			outputItems = append(outputItems, doneItem)
 
 		case eventKindImage:
-			// --- image item sequence (discrete, no deltas) ---
+			closeActiveTextItem()
+
+			itemID := fmt.Sprintf("%s_%d", msgID, msgSeq)
+			msgSeq++
+
 			addedItem := ResponseItem{
 				Type:    "message",
 				ID:      itemID,
@@ -487,7 +591,6 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			seq++
 			flushAndExtend()
 
-			// response.content_part.added
 			writeSSEEvent(w, "response.content_part.added", ResponseEvent{
 				Type:           "response.content_part.added",
 				SequenceNumber: seq,
@@ -499,7 +602,6 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			seq++
 			flushAndExtend()
 
-			// response.content_part.done (image is discrete, done immediately with full data)
 			writeSSEEvent(w, "response.content_part.done", ResponseEvent{
 				Type:           "response.content_part.done",
 				SequenceNumber: seq,
@@ -511,7 +613,6 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			seq++
 			flushAndExtend()
 
-			// response.output_item.done (strip image_url to save bandwidth)
 			doneItem := ResponseItem{
 				Type:    "message",
 				ID:      itemID,
@@ -531,7 +632,11 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			outputItems = append(outputItems, doneItem)
 
 		case eventKindFunctionCall:
-			// --- function_call item sequence (discrete, no deltas) ---
+			closeActiveTextItem()
+
+			itemID := fmt.Sprintf("%s_%d", msgID, msgSeq)
+			msgSeq++
+
 			addedItem := ResponseItem{
 				Type:     "function_call",
 				ID:       itemID,
@@ -548,7 +653,6 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			seq++
 			flushAndExtend()
 
-			// response.content_part.added
 			writeSSEEvent(w, "response.content_part.added", ResponseEvent{
 				Type:           "response.content_part.added",
 				SequenceNumber: seq,
@@ -560,7 +664,6 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			seq++
 			flushAndExtend()
 
-			// response.function_call_arguments.delta
 			writeSSEEvent(w, "response.function_call_arguments.delta", ResponseEvent{
 				Type:           "response.function_call_arguments.delta",
 				SequenceNumber: seq,
@@ -572,7 +675,6 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			seq++
 			flushAndExtend()
 
-			// response.function_call_arguments.done
 			writeSSEEvent(w, "response.function_call_arguments.done", ResponseEvent{
 				Type:           "response.function_call_arguments.done",
 				SequenceNumber: seq,
@@ -583,7 +685,6 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			seq++
 			flushAndExtend()
 
-			// response.content_part.done
 			writeSSEEvent(w, "response.content_part.done", ResponseEvent{
 				Type:           "response.content_part.done",
 				SequenceNumber: seq,
@@ -595,7 +696,6 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			seq++
 			flushAndExtend()
 
-			// response.output_item.done
 			doneItem := ResponseItem{
 				Type:      "function_call",
 				ID:        itemID,
@@ -620,6 +720,9 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 	// Wait for heartbeat to finish before sending final events.
 	cancel()
 	<-heartbeatDone
+
+	// Close any lingering streaming text item before final response.
+	closeActiveTextItem()
 
 	// Final response.completed with accumulated output.
 	resp.Status = "completed"
