@@ -38,6 +38,6 @@ type StreamingProvider interface {
 		tools []ToolDefinition,
 		model string,
 		options map[string]any,
-		onChunk func(accumulated string),
+		onChunk func(content, reasoning string),
 	) (*LLMResponse, error)
 }

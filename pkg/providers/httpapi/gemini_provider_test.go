@@ -185,8 +185,8 @@ func TestGeminiProvider_ChatStreamParsesThoughtTextAndToolCalls(t *testing.T) {
 		nil,
 		"gemini-2.5-flash",
 		nil,
-		func(accumulated string) {
-			updates = append(updates, accumulated)
+		func(content, reasoning string) {
+			updates = append(updates, content)
 		},
 	)
 	if err != nil {

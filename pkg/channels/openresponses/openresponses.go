@@ -115,13 +115,25 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 	// has already been delivered incrementally via Update().
 	// Allow thought/function_call/turn_end events through.
 	raw := msg.Context.Raw
+	logger.DebugCF("openresponses", "Send received", map[string]any{
+		"conversation_id": conversationID,
+		"has_streamer":    st.hasStreamer.Load(),
+		"message_kind":    raw["message_kind"],
+		"content_preview": truncateString(msg.Content, 200),
+	})
 	if st.hasStreamer.Load() && raw["message_kind"] != "thought" && raw["message_kind"] != "function_call" && raw["message_kind"] != "turn_end" {
+		logger.DebugCF("openresponses", "Send skipped (streamer active, not thought/fc/turn_end)", map[string]any{
+			"conversation_id": conversationID,
+		})
 		return nil, nil
 	}
 
 	var ev streamEvent
 
 	if raw["message_kind"] == "turn_end" {
+		logger.DebugCF("openresponses", "Send push turn_end", map[string]any{
+			"conversation_id": conversationID,
+		})
 		ev = streamEvent{kind: eventKindTurnEnd}
 		st.stream.push(ev)
 		c.convMu.Lock()
@@ -134,6 +146,10 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 
 	if raw["message_kind"] == "thought" {
 		ev = streamEvent{kind: eventKindReasoning, content: msg.Content}
+		logger.DebugCF("openresponses", "Send push reasoning", map[string]any{
+			"conversation_id": conversationID,
+			"content_preview": truncateString(msg.Content, 200),
+		})
 	} else if raw["message_kind"] == "function_call" {
 		ev = streamEvent{
 			kind:      eventKindFunctionCall,
@@ -141,8 +157,16 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 			name:      raw["name"],
 			arguments: raw["arguments"],
 		}
+		logger.DebugCF("openresponses", "Send push function_call", map[string]any{
+			"conversation_id": conversationID,
+			"name":            raw["name"],
+		})
 	} else {
 		ev = streamEvent{kind: eventKindText, content: msg.Content}
+		logger.DebugCF("openresponses", "Send push text", map[string]any{
+			"conversation_id": conversationID,
+			"content_preview": truncateString(msg.Content, 200),
+		})
 	}
 	st.stream.push(ev)
 	return nil, nil
@@ -374,12 +398,21 @@ func (s *openResponsesStreamer) Update(ctx context.Context, accumulated string) 
 	delta := accumulated[len(s.lastContent):]
 	s.lastContent = accumulated
 
+	logger.DebugCF("openresponses", "Streamer.Update push text delta", map[string]any{
+		"conversation_id": s.convID,
+		"delta_preview":   truncateString(delta, 200),
+		"accumulated_len": len(accumulated),
+	})
 	// Push delta (not accumulated) so handler emits true incremental SSE
 	s.stream.push(streamEvent{kind: eventKindTextDelta, content: delta})
 	return nil
 }
 
 func (s *openResponsesStreamer) Finalize(ctx context.Context, content string) error {
+	logger.DebugCF("openresponses", "Streamer.Finalize push turn_end", map[string]any{
+		"conversation_id": s.convID,
+		"final_content":   truncateString(content, 200),
+	})
 	// Signal turn end so handler can close the active output_item
 	s.stream.push(streamEvent{kind: eventKindTurnEnd})
 	return nil
@@ -387,4 +420,15 @@ func (s *openResponsesStreamer) Finalize(ctx context.Context, content string) er
 
 func (s *openResponsesStreamer) Cancel(ctx context.Context) {
 	s.stream.close()
+}
+
+// truncateString truncates s to maxLen characters, appending "..." if truncated.
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-3] + "..."
 }

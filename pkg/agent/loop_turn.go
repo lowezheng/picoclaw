@@ -370,7 +370,7 @@ turnLoop:
 			if al.cfg.Agents.Defaults.StreamResponse && len(activeCandidates) <= 1 {
 				if sp, ok := activeProvider.(providers.StreamingProvider); ok {
 					if streamer, ok := al.bus.GetStreamer(providerCtx, ts.channel, ts.chatID); ok && streamer != nil {
-						return al.callLLMStream(providerCtx, sp, streamer, messagesForCall, toolDefsForCall, llmModel, llmOpts)
+						return al.callLLMStream(providerCtx, sp, streamer, messagesForCall, toolDefsForCall, llmModel, llmOpts, ts.channel, ts.chatID)
 					}
 				}
 			}
@@ -1581,17 +1581,48 @@ func (al *AgentLoop) callLLMStream(
 	toolDefs []providers.ToolDefinition,
 	model string,
 	opts map[string]any,
+	channel, chatID string,
 ) (*providers.LLMResponse, error) {
 	var content strings.Builder
+	var lastReasoning string
+	var contentStarted bool
 
 	resp, err := sp.ChatStream(ctx, messages, toolDefs, model, opts,
-		func(accumulated string) {
-			if updateErr := streamer.Update(ctx, accumulated); updateErr != nil {
-				logger.DebugCF("agent", "streamer update failed", map[string]any{
-					"error": updateErr.Error(),
-				})
+		func(accumulated, reasoning string) {
+			// Publish content first; once content starts, stop streaming
+			// reasoning to avoid broken interleaved bubbles.
+			if accumulated != "" {
+				if updateErr := streamer.Update(ctx, accumulated); updateErr != nil {
+					logger.DebugCF("agent", "streamer update failed", map[string]any{
+						"error": updateErr.Error(),
+					})
+				}
+				if len(accumulated) > content.Len() {
+					content.WriteString(accumulated[content.Len():])
+				}
+				if content.Len() > 0 {
+					contentStarted = true
+				}
 			}
-			content.WriteString(accumulated)
+			// Stream reasoning only during the "reasoning-only" phase
+			// (before any content has been emitted). Once content starts,
+			// the remaining reasoning will be published in full by runTurn
+			// at the end of the turn.
+			if !contentStarted && reasoning != "" && reasoning != lastReasoning {
+				newReasoning := reasoning
+				if len(lastReasoning) > 0 && strings.HasPrefix(reasoning, lastReasoning) {
+					newReasoning = reasoning[len(lastReasoning):]
+				}
+				lastReasoning = reasoning
+				outCtx, outCancel := context.WithTimeout(ctx, 3*time.Second)
+				_ = al.bus.PublishOutbound(outCtx, bus.OutboundMessage{
+					Channel: channel,
+					ChatID:  chatID,
+					Content: newReasoning,
+					Context: bus.InboundContext{Raw: map[string]string{"message_kind": "thought"}},
+				})
+				outCancel()
+			}
 		},
 	)
 	if err != nil {

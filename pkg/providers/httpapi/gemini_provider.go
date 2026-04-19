@@ -113,7 +113,7 @@ func (p *GeminiProvider) ChatStream(
 	tools []ToolDefinition,
 	model string,
 	options map[string]any,
-	onChunk func(accumulated string),
+	onChunk func(content, reasoning string),
 ) (*LLMResponse, error) {
 	if p.apiBase == "" {
 		return nil, fmt.Errorf("API base not configured")
@@ -458,7 +458,7 @@ func parseGeminiResponse(resp *geminiGenerateContentResponse) *LLMResponse {
 func parseGeminiStreamResponse(
 	ctx context.Context,
 	reader io.Reader,
-	onChunk func(accumulated string),
+	onChunk func(content, reasoning string),
 ) (*LLMResponse, error) {
 	var contentBuilder strings.Builder
 	var reasoningBuilder strings.Builder
@@ -493,16 +493,18 @@ func parseGeminiStreamResponse(
 			return nil, fmt.Errorf("invalid gemini stream chunk: %w", err)
 		}
 
+		contentChanged := false
+		reasoningChanged := false
+
 		for _, candidate := range chunk.Candidates {
 			for _, part := range candidate.Content.Parts {
 				if part.Text != "" {
 					if part.Thought {
 						reasoningBuilder.WriteString(part.Text)
+						reasoningChanged = true
 					} else {
 						contentBuilder.WriteString(part.Text)
-						if onChunk != nil {
-							onChunk(contentBuilder.String())
-						}
+						contentChanged = true
 					}
 				}
 				if part.FunctionCall != nil {
@@ -535,6 +537,10 @@ func parseGeminiStreamResponse(
 			if candidate.FinishReason != "" {
 				finishReason = candidate.FinishReason
 			}
+		}
+
+		if onChunk != nil && (contentChanged || reasoningChanged) {
+			onChunk(contentBuilder.String(), reasoningBuilder.String())
 		}
 
 		if chunk.UsageMetadata.TotalTokenCount > 0 {

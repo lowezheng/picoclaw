@@ -157,6 +157,9 @@ func (c *OpenResponsesChannel) writeJSONResponseWithStream(
 	}
 
 	for ev := range stream.events {
+		logger.DebugCF("openresponses", "writeJSON event", map[string]any{
+			"event_kind": ev.kind,
+		})
 		switch ev.kind {
 		case eventKindTextDelta:
 			// Accumulate streaming deltas for later flush.
@@ -328,10 +331,14 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 	// Read stream events and emit SSE events.
 	msgSeq := 0
 	var (
-		hasActiveTextItem    bool
-		activeTextItemID     string
-		activeTextItemIndex  int
-		lastTextContent      string
+		hasActiveTextItem      bool
+		activeTextItemID       string
+		activeTextItemIndex    int
+		lastTextContent        string
+		hasActiveReasoningItem bool
+		activeReasoningItemID  string
+		activeReasoningItemIndex int
+		lastReasoningContent   string
 	)
 
 	// closeActiveTextItem finalizes an in-progress streaming text item.
@@ -383,13 +390,66 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 		hasActiveTextItem = false
 	}
 
+	// closeActiveReasoningItem finalizes an in-progress streaming reasoning item.
+	closeActiveReasoningItem := func() {
+		if !hasActiveReasoningItem {
+			return
+		}
+		// response.reasoning_text.done
+		writeSSEEvent(w, "response.reasoning_text.done", ResponseEvent{
+			Type:           "response.reasoning_text.done",
+			SequenceNumber: seq,
+			ItemID:         activeReasoningItemID,
+			OutputIndex:    activeReasoningItemIndex,
+			ContentIndex:   0,
+		})
+		seq++
+		flushAndExtend()
+
+		// response.content_part.done
+		writeSSEEvent(w, "response.content_part.done", ResponseEvent{
+			Type:           "response.content_part.done",
+			SequenceNumber: seq,
+			ItemID:         activeReasoningItemID,
+			OutputIndex:    activeReasoningItemIndex,
+			ContentIndex:   0,
+			Part:           Content{Type: "reasoning_text", Text: lastReasoningContent},
+		})
+		seq++
+		flushAndExtend()
+
+		// response.output_item.done
+		doneItem := ResponseItem{
+			Type:    "reasoning",
+			ID:      activeReasoningItemID,
+			Status:  "completed",
+			Content: []Content{{Type: "reasoning_text", Text: lastReasoningContent}},
+		}
+		writeSSEEvent(w, "response.output_item.done", ResponseEvent{
+			Type:           "response.output_item.done",
+			SequenceNumber: seq,
+			OutputIndex:    activeReasoningItemIndex,
+			Item:           doneItem,
+		})
+		seq++
+		flushAndExtend()
+
+		outputItems = append(outputItems, doneItem)
+		hasActiveReasoningItem = false
+	}
+
 	for ev := range stream.events {
+		logger.DebugCF("openresponses", "writeSSE event", map[string]any{
+			"event_kind": ev.kind,
+		})
 		switch ev.kind {
 		case eventKindTurnEnd:
 			closeActiveTextItem()
+			closeActiveReasoningItem()
 			continue
 
 		case eventKindTextDelta:
+			closeActiveReasoningItem()
 			if !hasActiveTextItem {
 				activeTextItemID = fmt.Sprintf("%s_%d", msgID, msgSeq)
 				activeTextItemIndex = len(outputItems)
@@ -440,6 +500,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 
 		case eventKindText:
 			closeActiveTextItem()
+			closeActiveReasoningItem()
 
 			itemID := fmt.Sprintf("%s_%d", msgID, msgSeq)
 			msgSeq++
@@ -523,87 +584,56 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 
 		case eventKindReasoning:
 			closeActiveTextItem()
+			if !hasActiveReasoningItem {
+				activeReasoningItemID = fmt.Sprintf("%s_%d", msgID, msgSeq)
+				activeReasoningItemIndex = len(outputItems)
+				msgSeq++
+				hasActiveReasoningItem = true
+				lastReasoningContent = ""
 
-			itemID := fmt.Sprintf("%s_%d", msgID, msgSeq)
-			msgSeq++
+				addedItem := ResponseItem{
+					Type:    "reasoning",
+					ID:      activeReasoningItemID,
+					Status:  "in_progress",
+					Content: []Content{},
+				}
+				writeSSEEvent(w, "response.output_item.added", ResponseEvent{
+					Type:           "response.output_item.added",
+					SequenceNumber: seq,
+					OutputIndex:    activeReasoningItemIndex,
+					Item:           addedItem,
+				})
+				seq++
+				flushAndExtend()
 
-			addedItem := ResponseItem{
-				Type:    "reasoning",
-				ID:      itemID,
-				Status:  "in_progress",
-				Content: []Content{},
+				writeSSEEvent(w, "response.content_part.added", ResponseEvent{
+					Type:           "response.content_part.added",
+					SequenceNumber: seq,
+					ItemID:         activeReasoningItemID,
+					OutputIndex:    activeReasoningItemIndex,
+					ContentIndex:   0,
+					Part:           Content{Type: "reasoning_text", Text: ""},
+				})
+				seq++
+				flushAndExtend()
 			}
-			writeSSEEvent(w, "response.output_item.added", ResponseEvent{
-				Type:           "response.output_item.added",
-				SequenceNumber: seq,
-				OutputIndex:    len(outputItems),
-				Item:           addedItem,
-			})
-			seq++
-			flushAndExtend()
 
-			writeSSEEvent(w, "response.content_part.added", ResponseEvent{
-				Type:           "response.content_part.added",
-				SequenceNumber: seq,
-				ItemID:         itemID,
-				OutputIndex:    len(outputItems),
-				ContentIndex:   0,
-				Part:           Content{Type: "reasoning_text", Text: ""},
-			})
-			seq++
-			flushAndExtend()
-
+			lastReasoningContent += ev.content
 			writeSSEEvent(w, "response.reasoning_text.delta", ResponseEvent{
 				Type:           "response.reasoning_text.delta",
 				SequenceNumber: seq,
-				ItemID:         itemID,
-				OutputIndex:    len(outputItems),
+				ItemID:         activeReasoningItemID,
+				OutputIndex:    activeReasoningItemIndex,
 				ContentIndex:   0,
 				Delta:          ev.content,
 			})
 			seq++
 			flushAndExtend()
-
-			writeSSEEvent(w, "response.reasoning_text.done", ResponseEvent{
-				Type:           "response.reasoning_text.done",
-				SequenceNumber: seq,
-				ItemID:         itemID,
-				OutputIndex:    len(outputItems),
-				ContentIndex:   0,
-			})
-			seq++
-			flushAndExtend()
-
-			writeSSEEvent(w, "response.content_part.done", ResponseEvent{
-				Type:           "response.content_part.done",
-				SequenceNumber: seq,
-				ItemID:         itemID,
-				OutputIndex:    len(outputItems),
-				ContentIndex:   0,
-				Part:           Content{Type: "reasoning_text", Text: ev.content},
-			})
-			seq++
-			flushAndExtend()
-
-			doneItem := ResponseItem{
-				Type:    "reasoning",
-				ID:      itemID,
-				Status:  "completed",
-				Content: []Content{{Type: "reasoning_text", Text: ev.content}},
-			}
-			writeSSEEvent(w, "response.output_item.done", ResponseEvent{
-				Type:           "response.output_item.done",
-				SequenceNumber: seq,
-				OutputIndex:    len(outputItems),
-				Item:           doneItem,
-			})
-			seq++
-			flushAndExtend()
-
-			outputItems = append(outputItems, doneItem)
+			continue
 
 		case eventKindImage:
 			closeActiveTextItem()
+			closeActiveReasoningItem()
 
 			itemID := fmt.Sprintf("%s_%d", msgID, msgSeq)
 			msgSeq++
@@ -666,6 +696,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 
 		case eventKindFunctionCall:
 			closeActiveTextItem()
+			closeActiveReasoningItem()
 
 			itemID := fmt.Sprintf("%s_%d", msgID, msgSeq)
 			msgSeq++
@@ -756,6 +787,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 
 	// Close any lingering streaming text item before final response.
 	closeActiveTextItem()
+	closeActiveReasoningItem()
 
 	// Final response.completed with accumulated output.
 	resp.Status = "completed"

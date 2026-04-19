@@ -65,7 +65,7 @@ func (p *HTTPProvider) ChatStream(
 	tools []ToolDefinition,
 	model string,
 	options map[string]any,
-	onChunk func(accumulated string),
+	onChunk func(content, reasoning string),
 ) (*LLMResponse, error) {
 	return p.delegate.ChatStream(ctx, messages, tools, model, options, onChunk)
 }

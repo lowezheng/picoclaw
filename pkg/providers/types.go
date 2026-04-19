@@ -38,7 +38,7 @@ type StatefulProvider interface {
 }
 
 // StreamingProvider is an optional interface for providers that support token streaming.
-// onChunk receives the accumulated text so far (not individual deltas).
+// onChunk receives the accumulated content and reasoning text so far (not individual deltas).
 // The returned LLMResponse is the same complete response for compatibility with tool-call handling.
 type StreamingProvider interface {
 	ChatStream(
@@ -47,7 +47,7 @@ type StreamingProvider interface {
 		tools []ToolDefinition,
 		model string,
 		options map[string]any,
-		onChunk func(accumulated string),
+		onChunk func(content, reasoning string),
 	) (*LLMResponse, error)
 }
 
