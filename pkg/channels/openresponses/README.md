@@ -404,109 +404,114 @@ Rule: If an item ends in a terminal state, it must be the last item emitted, and
 
 ---
 
-## SSE Streaming Events
+## SSE Streaming Events — Frontend Integration Guide
 
-OpenResponses uses **semantic events** (not raw text deltas) for streaming.
+OpenResponses uses **semantic events** (not raw text deltas) for streaming. This section provides a complete event type reference for frontend SSE consumers.
 
-### Event Classification
+### Quick Reference
 
-| Category | Definition |
-|---|---|
-| **Delta Events** | Represent a change to an object since its last update |
-| **State Machine Events** | Represent a change in the status of an object |
-
-### State Machine Events
-
-| Event | Trigger |
-|---|---|
-| `response.in_progress` | Response moves from `queued` to `in_progress` |
-| `response.completed` | Response finished successfully |
-| `response.failed` | Response encountered an error |
-
-### Delta Events
-
-| Event | Level | Trigger |
-|---|---|---|
-| `response.output_item.added` | output item | New output item generated |
-| `response.content_part.added` | content part | New content part started |
-| `response.<content_type>.delta` | content | Content fragment increment (repeated) |
-| `response.<content_type>.done` | content | Content delta sequence ended |
-| `response.content_part.done` | content part | Content part closed |
-| `response.output_item.done` | output item | Output item closed |
-
-> `<content_type>` is a placeholder. Actual values depend on the content part's `type`, e.g. `output_text`, `function_call_arguments`.
-
-### Hierarchical Relationship
-
-```
-Response
-  └── output_items[]          <-- output_item level
-        └── Item
-              └── content[]   <-- content_part level
-                    └── Content Part
-                          └── Delta
-```
-
-### Streaming Event Sequence
-
-For a text message:
-
-```
-response.in_progress
-
-  output_item.added           (status: in_progress)
-    content_part.added        (part includes type and zero values)
-      output_text.delta       (repeated many times)
-      output_text.delta
-      ...
-      output_text.done
-    content_part.done
-  output_item.done            (status: completed)
-
-response.completed
-
-[DONE]
-```
-
-For a function call:
-
-```
-response.in_progress
-
-  output_item.added           (type: function_call, status: in_progress)
-    content_part.added
-      function_call_arguments.delta   (repeated)
-      function_call_arguments.done
-    content_part.done
-  output_item.done            (status: completed)
-
-response.completed
-```
+| # | Event Type | Category | Description |
+|---|---|---|---|
+| 1 | `response.in_progress` | State Machine | Response begins processing |
+| 2 | `response.output_item.added` | Lifecycle | New output item created |
+| 3 | `response.content_part.added` | Lifecycle | New content part started |
+| 4 | `response.output_text.delta` | Delta | Text fragment added |
+| 5 | `response.output_text.done` | Delta | Text stream ended |
+| 6 | `response.reasoning_text.delta` | Delta | Reasoning fragment added |
+| 7 | `response.reasoning_text.done` | Delta | Reasoning stream ended |
+| 8 | `response.function_call_arguments.delta` | Delta | Function args fragment added |
+| 9 | `response.function_call_arguments.done` | Delta | Function args stream ended |
+| 10 | `response.content_part.done` | Lifecycle | Content part finalized |
+| 11 | `response.output_item.done` | Lifecycle | Output item finalized |
+| 12 | `response.completed` | State Machine | Response finished successfully |
+| 13 | `response.failed` | State Machine | Response encountered an error |
+| 14 | `[DONE]` | Terminator | Stream ended |
 
 ### Common Event Fields
 
-All events must include:
+All events share these fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `type` | `string` | Event type name (matches SSE `event:` field) |
+| `sequence_number` | `int` | Monotonically increasing sequence |
+
+Item-targeting events add:
+
+| Field | Type | Description |
+|---|---|---|
+| `item_id` | `string` | Target item ID |
+| `output_index` | `int` | Position in response `output` array |
+
+Content-level events add:
+
+| Field | Type | Description |
+|---|---|---|
+| `content_index` | `int` | Position within item's `content` array |
+
+Delta events add:
+
+| Field | Type | Description |
+|---|---|---|
+| `delta` | `string` | Incremental content fragment |
+
+---
+
+### Event Type Specifications
+
+#### 1. `response.in_progress`
+
+Response moves from `queued` to `in_progress`.
 
 ```json
 {
-  "type": "response.output_text.delta",
-  "sequence_number": 10
+  "type": "response.in_progress",
+  "sequence_number": 0,
+  "response": {
+    "id": "resp_xxx",
+    "object": "response",
+    "status": "in_progress",
+    "output": [],
+    "usage": { "input_tokens": 0, "output_tokens": 0 }
+  }
 }
 ```
 
-Item-targeting events add:
-- `item_id` -- the target item's ID
-- `output_index` -- position in the response `output` array
+| Field | Type | Description |
+|---|---|---|
+| `response` | `Response` | Partial response with `status: "in_progress"` |
 
-Content-level events add:
-- `content_index` -- position within the item's `content` array
+---
 
-Delta events add:
-- `delta` -- the incremental string fragment
+#### 2. `response.output_item.added`
 
-### Content Part `part` Field
+New output item created (message / reasoning / function_call).
 
-`response.content_part.added` and `response.content_part.done` must include a `part` object:
+```json
+{
+  "type": "response.output_item.added",
+  "sequence_number": 1,
+  "output_index": 0,
+  "item": {
+    "type": "message",
+    "id": "msg_xxx",
+    "status": "in_progress",
+    "role": "assistant",
+    "content": []
+  }
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `output_index` | `int` | Position in `output` array |
+| `item` | `ResponseItem` | The new item (status: `in_progress`) |
+
+---
+
+#### 3. `response.content_part.added`
+
+New content part started within an item.
 
 ```json
 {
@@ -522,45 +527,346 @@ Delta events add:
 }
 ```
 
-At `added`, the `part` contains its `type` and zero values. At `done`, it contains the final content.
+| Field | Type | Description |
+|---|---|---|
+| `item_id` | `string` | Parent item ID |
+| `output_index` | `int` | Item position in output array |
+| `content_index` | `int` | Part position in item's content array |
+| `part` | `Content` | Content part with zero values (`text: ""`, `image_url: ""`) |
 
-### Terminator
+---
 
-The terminal event must be the literal string:
+#### 4. `response.output_text.delta`
+
+Text fragment increment. Repeated many times.
+
+```json
+{
+  "type": "response.output_text.delta",
+  "sequence_number": 3,
+  "item_id": "msg_xxx",
+  "output_index": 0,
+  "content_index": 0,
+  "delta": "Hello! "
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `item_id` | `string` | Target message item ID |
+| `output_index` | `int` | Item position |
+| `content_index` | `int` | Part position |
+| `delta` | `string` | Text fragment to append |
+
+---
+
+#### 5. `response.output_text.done`
+
+Text delta sequence ended.
+
+```json
+{
+  "type": "response.output_text.done",
+  "sequence_number": 5,
+  "item_id": "msg_xxx",
+  "output_index": 0,
+  "content_index": 0
+}
+```
+
+---
+
+#### 6. `response.reasoning_text.delta`
+
+Reasoning fragment increment. Repeated.
+
+```json
+{
+  "type": "response.reasoning_text.delta",
+  "sequence_number": 6,
+  "item_id": "rs_xxx",
+  "output_index": 0,
+  "content_index": 0,
+  "delta": "Let me think..."
+}
+```
+
+---
+
+#### 7. `response.reasoning_text.done`
+
+Reasoning delta sequence ended.
+
+```json
+{
+  "type": "response.reasoning_text.done",
+  "sequence_number": 8,
+  "item_id": "rs_xxx",
+  "output_index": 0,
+  "content_index": 0
+}
+```
+
+---
+
+#### 8. `response.function_call_arguments.delta`
+
+Function call arguments fragment increment.
+
+```json
+{
+  "type": "response.function_call_arguments.delta",
+  "sequence_number": 9,
+  "item_id": "fc_xxx",
+  "output_index": 0,
+  "content_index": 0,
+  "delta": "{\"city\":\"Beijing\"}"
+}
+```
+
+---
+
+#### 9. `response.function_call_arguments.done`
+
+Function call arguments delta sequence ended.
+
+```json
+{
+  "type": "response.function_call_arguments.done",
+  "sequence_number": 10,
+  "item_id": "fc_xxx",
+  "output_index": 0,
+  "content_index": 0
+}
+```
+
+---
+
+#### 10. `response.content_part.done`
+
+Content part finalized. Contains final content.
+
+```json
+{
+  "type": "response.content_part.done",
+  "sequence_number": 11,
+  "item_id": "msg_xxx",
+  "output_index": 0,
+  "content_index": 0,
+  "part": {
+    "type": "output_text",
+    "text": "Hello! I'm doing well."
+  }
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `part` | `Content` | Final content with accumulated value |
+
+---
+
+#### 11. `response.output_item.done`
+
+Output item finalized. Contains completed item.
+
+```json
+{
+  "type": "response.output_item.done",
+  "sequence_number": 12,
+  "output_index": 0,
+  "item": {
+    "type": "message",
+    "id": "msg_xxx",
+    "status": "completed",
+    "role": "assistant",
+    "content": [
+      { "type": "output_text", "text": "Hello! I'm doing well." }
+    ]
+  }
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `output_index` | `int` | Final position |
+| `item` | `ResponseItem` | Completed item (status: `completed`) |
+
+---
+
+#### 12. `response.completed`
+
+Response finished. Contains final response with all output items.
+
+```json
+{
+  "type": "response.completed",
+  "sequence_number": 13,
+  "response": {
+    "id": "resp_xxx",
+    "object": "response",
+    "status": "completed",
+    "output": [
+      {
+        "type": "message",
+        "id": "msg_xxx",
+        "status": "completed",
+        "role": "assistant",
+        "content": [
+          { "type": "output_text", "text": "Hello! I'm doing well." }
+        ]
+      }
+    ],
+    "usage": { "input_tokens": 0, "output_tokens": 0 }
+  }
+}
+```
+
+---
+
+#### 13. `response.failed`
+
+Response encountered an error.
+
+```json
+{
+  "type": "response.failed",
+  "sequence_number": 5,
+  "response": {
+    "id": "resp_xxx",
+    "object": "response",
+    "status": "failed",
+    "output": [],
+    "error": {
+      "message": "Model processing failed",
+      "type": "model_error",
+      "code": "model_not_found"
+    }
+  }
+}
+```
+
+---
+
+#### 14. `[DONE]`
+
+Terminal marker — the literal string `data: [DONE]\n\n`.
 
 ```
 data: [DONE]
 ```
 
-### Full Stream Example
+### Event Sequence Examples
+
+#### Text message
 
 ```
-event: response.in_progress
-data: {"type":"response.in_progress","sequence_number":0,"response":{"id":"resp_xxx","status":"in_progress","output":[]}}
+response.in_progress
 
-event: response.output_item.added
-data: {"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"type":"message","id":"msg_xxx","status":"in_progress","role":"assistant","content":[]}}
+  output_item.added           (type: message, status: in_progress)
+    content_part.added        (part.type: output_text, text: "")
+      output_text.delta       (repeated many times)
+      output_text.delta
+      ...
+      output_text.done
+    content_part.done         (part contains final text)
+  output_item.done            (type: message, status: completed)
 
-event: response.content_part.added
-data: {"type":"response.content_part.added","sequence_number":2,"item_id":"msg_xxx","output_index":0,"content_index":0,"part":{"type":"output_text","text":""}}
+response.completed
 
-event: response.output_text.delta
-data: {"type":"response.output_text.delta","sequence_number":3,"item_id":"msg_xxx","output_index":0,"content_index":0,"delta":"Hello! "}
-
-event: response.output_text.delta
-data: {"type":"response.output_text.delta","sequence_number":4,"item_id":"msg_xxx","output_index":0,"content_index":0,"delta":"I'm doing well."}
-
-event: response.output_text.done
-data: {"type":"response.output_text.done","sequence_number":5,"item_id":"msg_xxx","output_index":0,"content_index":0}
-
-event: response.content_part.done
-data: {"type":"response.content_part.done","sequence_number":6,"item_id":"msg_xxx","output_index":0,"content_index":0,"part":{"type":"output_text","text":"Hello! I'm doing well."}}
-
-event: response.output_item.done
-data: {"type":"response.output_item.done","sequence_number":7,"output_index":0,"item":{"type":"message","id":"msg_xxx","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Hello! I'm doing well."}]}}
-
-event: response.completed
-data: {"type":"response.completed","sequence_number":8,"response":{"id":"resp_xxx","status":"completed","output":[{"type":"message","id":"msg_xxx","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Hello! I'm doing well."}]}]}}
-
-data: [DONE]
+[DONE]
 ```
+
+#### Reasoning item
+
+```
+response.in_progress
+
+  output_item.added           (type: reasoning, status: in_progress)
+    content_part.added        (part.type: reasoning_text, text: "")
+      reasoning_text.delta    (repeated)
+      reasoning_text.delta
+      ...
+      reasoning_text.done
+    content_part.done         (part contains final reasoning)
+  output_item.done            (type: reasoning, status: completed)
+
+response.completed
+
+[DONE]
+```
+
+#### Function call
+
+```
+response.in_progress
+
+  output_item.added           (type: function_call, status: in_progress)
+    content_part.added        (part.type: function_call_arguments, arguments: "")
+      function_call_arguments.delta   (repeated)
+      function_call_arguments.done
+    content_part.done         (part contains final arguments)
+  output_item.done            (type: function_call, status: completed)
+
+response.completed
+```
+
+#### Image output
+
+```
+response.in_progress
+
+  output_item.added           (type: message, status: in_progress)
+    content_part.added        (part.type: output_image, image_url: "")
+    content_part.done         (part contains base64 data URL)
+  output_item.done            (type: message, status: completed)
+
+response.completed
+```
+
+### Event Order Rules
+
+For each output item, events always follow this nesting:
+
+```
+output_item.added
+  content_part.added
+    <content_type>.delta   (0..N times)
+    <content_type>.done
+  content_part.done
+output_item.done
+```
+
+Cross-item ordering:
+- An item in `in_progress` state **must** be closed before a new item of the same "slot" starts
+- `turn_end` closes all active items; after `turn_end`, a new item may begin
+- The response terminates with `response.completed` or `response.failed`, then `[DONE]`
+
+### Hierarchical Relationship
+
+```
+Response
+  └── output_items[]          <-- output_item level
+        └── Item
+              └── content[]   <-- content_part level
+                    └── Content Part
+                          └── Delta
+```
+
+---
+
+## Implementation Detail — Internal Event Pipeline
+
+All agent outputs (`OutboundMessage`) are normalized into a single internal event pipeline (`streamEvent`) before being emitted as SSE events. This centralization ensures consistent event ordering and state machine transitions regardless of output type.
+
+| Internal Event (`streamEventKind`) | Source (`message_kind`) | Mapped SSE Content Type | Fields | Description |
+|---|---|---|---|---|
+| `text_delta` | Streamer (`Update`) | `output_text` | `content: string` | Incremental text token from streaming mode. Accumulated by handler into `lastTextContent`. |
+| `text` | `OutboundMessage` (default) | `output_text` | `content: string` | Complete text from non-streaming mode, or any non-special outbound message (e.g. `tool_timing`). |
+| `reasoning` | `thought` | `reasoning_text` | `content: string` | Model reasoning / thought content. **Note:** Unlike text, there is no separate internal `reasoning_delta` event — both incremental deltas (via `UpdateReasoning`) and full text (via `Send`) use the same `eventKindReasoning` type. The handler accumulates them into `lastReasoningContent` and emits `response.reasoning_text.delta` SSE events uniformly. |
+| `image` | `SendMedia` | `output_image` | `imageURL: string`, `caption: string` | Base64 data URL image output from media store. |
+| `function_call` | `function_call` | `function_call_arguments` | `callID: string`, `name: string`, `arguments: string` | Tool invocation. Arguments may arrive as deltas (via `UpdateToolCall`) or complete (via `Send`). |
+| `turn_end` | `turn_end` | — | — | Signals the end of a turn. Closes all active `in_progress` items and triggers `response.completed`. |
+
+**Note on `tool_timing`:** This message kind is allowed through the streamer filter and maps to `eventKindText` (treated as informational text output).
+

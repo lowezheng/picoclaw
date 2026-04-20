@@ -157,6 +157,24 @@ build-launcher:
 build-launcher-frontend:
 	@$(MAKE) -C web build-frontend
 
+## build-launcher-all: Build picoclaw-launcher for all Makefile-managed platforms
+build-launcher-all: build-launcher-frontend
+	@echo "Building picoclaw-launcher for multiple platforms..."
+	@mkdir -p $(BUILD_DIR)
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-linux-amd64 ./web/backend/
+	GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-linux-arm ./web/backend/
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-linux-arm64 ./web/backend/
+	GOOS=linux GOARCH=loong64 CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-linux-loong64 ./web/backend/
+	GOOS=linux GOARCH=riscv64 CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-linux-riscv64 ./web/backend/
+	GOOS=linux GOARCH=mipsle GOMIPS=softfloat CGO_ENABLED=0 go build $(GOFLAGS_NO_GOOLM) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-linux-mipsle ./web/backend/
+	$(call PATCH_MIPS_FLAGS,$(BUILD_DIR)/picoclaw-launcher-linux-mipsle)
+	GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-linux-armv7 ./web/backend/
+	CGO_LDFLAGS="-mmacosx-version-min=10.11" CGO_CFLAGS="-mmacosx-version-min=10.11" GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-darwin-arm64 ./web/backend/
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "-H=windowsgui $(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-windows-amd64.exe ./web/backend/
+	GOOS=netbsd GOARCH=amd64 CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-netbsd-amd64 ./web/backend/
+	GOOS=netbsd GOARCH=arm64 CGO_ENABLED=0 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-netbsd-arm64 ./web/backend/
+	@echo "Launcher builds complete"
+
 ## build-launcher-tui: Build the picoclaw-launcher TUI binary
 build-launcher-tui:
 	@echo "Building picoclaw-launcher-tui for $(PLATFORM)/$(ARCH)..."
@@ -164,6 +182,25 @@ build-launcher-tui:
 	@$(GO) build $(GOFLAGS) -o $(BUILD_DIR)/picoclaw-launcher-tui-$(PLATFORM)-$(ARCH) ./cmd/picoclaw-launcher-tui
 	@ln -sf picoclaw-launcher-tui-$(PLATFORM)-$(ARCH) $(BUILD_DIR)/picoclaw-launcher-tui
 	@echo "Build complete: $(BUILD_DIR)/picoclaw-launcher-tui"
+
+## build-launcher-tui-all: Build picoclaw-launcher-tui for all Makefile-managed platforms
+build-launcher-tui-all:
+	@echo "Building picoclaw-launcher-tui for multiple platforms..."
+	@mkdir -p $(BUILD_DIR)
+	GOOS=linux GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-tui-linux-amd64 ./cmd/picoclaw-launcher-tui
+	GOOS=linux GOARCH=arm GOARM=7 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-tui-linux-arm ./cmd/picoclaw-launcher-tui
+	GOOS=linux GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-tui-linux-arm64 ./cmd/picoclaw-launcher-tui
+	@$(PTY_PATCH_LOONG64)
+	GOOS=linux GOARCH=loong64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-tui-linux-loong64 ./cmd/picoclaw-launcher-tui
+	GOOS=linux GOARCH=riscv64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-tui-linux-riscv64 ./cmd/picoclaw-launcher-tui
+	GOOS=linux GOARCH=mipsle GOMIPS=softfloat $(GO) build $(GOFLAGS_NO_GOOLM) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-tui-linux-mipsle ./cmd/picoclaw-launcher-tui
+	$(call PATCH_MIPS_FLAGS,$(BUILD_DIR)/picoclaw-launcher-tui-linux-mipsle)
+	GOOS=linux GOARCH=arm GOARM=7 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-tui-linux-armv7 ./cmd/picoclaw-launcher-tui
+	GOOS=darwin GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-tui-darwin-arm64 ./cmd/picoclaw-launcher-tui
+	GOOS=windows GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-tui-windows-amd64.exe ./cmd/picoclaw-launcher-tui
+	GOOS=netbsd GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-tui-netbsd-amd64 ./cmd/picoclaw-launcher-tui
+	GOOS=netbsd GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-tui-netbsd-arm64 ./cmd/picoclaw-launcher-tui
+	@echo "Launcher TUI builds complete"
 
 ## build-whatsapp-native: Build with WhatsApp native (whatsmeow) support; larger binary
 build-whatsapp-native: generate

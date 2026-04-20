@@ -520,6 +520,10 @@ func TestDefaultConfig_Channels(t *testing.T) {
 
 	for name, bc := range cfg.Channels {
 		if bc.Enabled {
+			// openresponses is enabled by default as a core API channel
+			if name == ChannelOpenResponses {
+				continue
+			}
 			t.Errorf("Channel %q should be disabled by default", name)
 		}
 	}

@@ -38,7 +38,8 @@ func DefaultConfig() *Config {
 					Enabled:       false,
 					MaxArgsLength: 300,
 				},
-				SplitOnMarker: false,
+				SplitOnMarker:  false,
+				StreamResponse: true,
 			},
 		},
 		Session: SessionConfig{
@@ -520,6 +521,15 @@ func defaultChannels() ChannelsConfig {
 				"tls":      true,
 				"nick":     "picoclaw",
 				"channels": []string{},
+			},
+		},
+		"openresponses": map[string]any{
+			"enabled":    true,
+			"allow_from": []string{"*"},
+			"settings": map[string]any{
+				"endpoint_path":   "/v1/responses",
+				"request_timeout": 60,
+				"max_body_size":   1048576,
 			},
 		},
 	}
