@@ -205,7 +205,7 @@ func truncateForEval(s string, maxLen int) string {
 	return s[:maxLen] + "... [truncated]"
 }
 
-var codeBlockRe = regexp.MustCompile("(?s)```(?:json)?\\s*\\n(.*?)")
+var codeBlockRe = regexp.MustCompile("(?s)```(?:json)?\\s*\\n(.*?)```")
 
 func parseConfidenceScore(content string) (*ConfidenceScore, error) {
 	content = strings.TrimSpace(content)
@@ -221,9 +221,6 @@ func parseConfidenceScore(content string) (*ConfidenceScore, error) {
 	for _, m := range matches {
 		if len(m) > 1 {
 			block := strings.TrimSpace(m[1])
-			if idx := strings.LastIndex(block, "```"); idx > 0 {
-				block = strings.TrimSpace(block[:idx])
-			}
 			if err := json.Unmarshal([]byte(block), &score); err == nil {
 				return &score, nil
 			}
