@@ -1,11 +1,61 @@
 package agent
 
 import (
+	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
+
+func TestConfidenceEvaluatorEvaluate(t *testing.T) {
+	// Create a mock provider that returns a valid confidence score JSON
+	mockProvider := &mockConfidenceProvider{
+		response: `{"overallScore":85,"rating":"⭐⭐⭐⭐","stars":4,"dimensions":[{"name":"事实准确性","score":90,"weight":0.30,"reason":"good"}],"sources":[]}`,
+	}
+
+	evaluator := NewConfidenceEvaluator(mockProvider, "test-model")
+	req := &ConfidenceRequest{
+		UserMessage:  "test question",
+		FinalContent: "test answer",
+		Messages: []providers.Message{
+			{Role: "user", Content: "test question"},
+			{Role: "assistant", Content: "test answer"},
+		},
+	}
+
+	score, err := evaluator.Evaluate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Evaluate returned error: %v", err)
+	}
+	if score == nil {
+		t.Fatal("Evaluate returned nil score")
+	}
+	if score.OverallScore != 85 {
+		t.Errorf("overallScore = %d, want 85", score.OverallScore)
+	}
+	if score.Stars != 4 {
+		t.Errorf("stars = %d, want 4", score.Stars)
+	}
+}
+
+// mockConfidenceProvider is a simple mock for testing
+type mockConfidenceProvider struct {
+	response string
+	err      error
+}
+
+func (m *mockConfidenceProvider) Chat(ctx context.Context, messages []providers.Message, tools []providers.ToolDefinition, model string, opts map[string]any) (*providers.LLMResponse, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return &providers.LLMResponse{Content: m.response}, nil
+}
+
+func (m *mockConfidenceProvider) GetDefaultModel() string {
+	return "mock-model"
+}
 
 func TestBuildEvaluationInput(t *testing.T) {
 	req := &ConfidenceRequest{
@@ -29,19 +79,19 @@ func TestBuildEvaluationInput(t *testing.T) {
 	if input == "" {
 		t.Fatal("buildEvaluationInput returned empty string")
 	}
-	if !contains(input, "用户原始问题") {
+	if !strings.Contains(input, "用户原始问题") {
 		t.Error("missing user question section")
 	}
-	if !contains(input, "完整对话过程") {
+	if !strings.Contains(input, "完整对话过程") {
 		t.Error("missing conversation history section")
 	}
-	if !contains(input, "最终回答") {
+	if !strings.Contains(input, "最终回答") {
 		t.Error("missing final answer section")
 	}
-	if !contains(input, "search_web") {
+	if !strings.Contains(input, "search_web") {
 		t.Error("missing tool call info")
 	}
-	if !contains(input, "goroutines") {
+	if !strings.Contains(input, "goroutines") {
 		t.Error("missing tool result content")
 	}
 }
@@ -117,14 +167,14 @@ func TestTruncateForEval(t *testing.T) {
 
 	long := "this is a very long string that should be truncated"
 	result := truncateForEval(long, 10)
-	if !contains(result, "truncated") {
+	if !strings.Contains(result, "truncated") {
 		t.Error("long string should be truncated with indicator")
 	}
 
 	// Test rune-safe truncation with Chinese characters
 	chinese := "这是一个很长的中文字符串用来测试截断功能"
 	resultChinese := truncateForEval(chinese, 5)
-	if !contains(resultChinese, "truncated") {
+	if !strings.Contains(resultChinese, "truncated") {
 		t.Error("Chinese string should be truncated with indicator")
 	}
 	// Verify no invalid UTF-8
@@ -155,16 +205,16 @@ func TestFormatConfidenceBlock(t *testing.T) {
 	if block == "" {
 		t.Fatal("FormatConfidenceBlock returned empty string")
 	}
-	if !contains(block, "---MESSAGE_START---") {
+	if !strings.Contains(block, "---MESSAGE_START---") {
 		t.Error("missing MESSAGE_START marker")
 	}
-	if !contains(block, "---MESSAGE_END---") {
+	if !strings.Contains(block, "---MESSAGE_END---") {
 		t.Error("missing MESSAGE_END marker")
 	}
-	if !contains(block, `"messageType":"confidence"`) {
+	if !strings.Contains(block, `"messageType":"confidence"`) {
 		t.Error("missing confidence messageType")
 	}
-	if !contains(block, `"overallScore":82`) {
+	if !strings.Contains(block, `"overallScore":82`) {
 		t.Error("missing overallScore")
 	}
 }
@@ -179,15 +229,3 @@ func TestFormatConfidenceBlockNil(t *testing.T) {
 	}
 }
 
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsAt(s, substr))
-}
-
-func containsAt(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
