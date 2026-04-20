@@ -51,9 +51,10 @@ type AgentLoop struct {
 	cmdRegistry    *commands.Registry
 	mcp            mcpRuntime
 	hookRuntime    hookRuntime
-	steering       *steeringQueue
-	pendingSkills  sync.Map
-	mu             sync.RWMutex
+	steering            *steeringQueue
+	pendingSkills       sync.Map
+	mu                  sync.RWMutex
+	confidenceEvaluator *ConfidenceEvaluator
 
 	// workerSem limits concurrent turn processing workers.
 	workerSem chan struct{}
@@ -604,5 +605,30 @@ func (al *AgentLoop) runAgentLoop(
 
 // filterClientWebSearch returns a copy of tools with the client-side
 // web_search tool removed. Used when native provider search is preferred.
+
+// initConfidenceEvaluator creates the confidence evaluator for the given agent.
+func (al *AgentLoop) initConfidenceEvaluator(agent *AgentInstance) {
+	cfg := al.GetConfig()
+	if !cfg.Agents.Defaults.IsConfidenceScoreEnabled("") {
+		return
+	}
+
+	// Use the agent's light provider if available
+	provider := agent.Provider
+	model := agent.Model
+	if agent.LightProvider != nil && agent.Router != nil {
+		provider = agent.LightProvider
+		model = agent.Router.LightModel()
+	}
+
+	if provider == nil {
+		logger.WarnCF("agent", "Confidence score enabled but no provider available", nil)
+		return
+	}
+
+	al.confidenceEvaluator = NewConfidenceEvaluator(provider, model)
+	logger.InfoCF("agent", "Confidence evaluator initialized",
+		map[string]any{"model": model, "agent_id": agent.ID})
+}
 
 // Helper to extract provider from registry for cleanup
