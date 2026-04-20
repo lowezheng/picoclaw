@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
@@ -170,7 +169,7 @@ func buildEvaluationInput(req *ConfidenceRequest) string {
 		switch msg.Role {
 		case "user":
 			msgNum++
-			b.WriteString(fmt.Sprintf("\n--- 用户输入 #%d ---\n%s\n", msgNum, truncateForEval(msg.Content, 2000)))
+			b.WriteString(fmt.Sprintf("\n--- 用户输入 #%d ---\n%s\n", msgNum, truncateForEval(msg.Content, 2000))) // limit user/tool/assistant content to avoid oversized prompts
 		case "assistant":
 			msgNum++
 			if len(msg.ToolCalls) > 0 {
@@ -180,29 +179,30 @@ func buildEvaluationInput(req *ConfidenceRequest) string {
 					if tc.Function != nil {
 						args = tc.Function.Arguments
 					}
-					b.WriteString(fmt.Sprintf("工具: %s, 参数: %s\n", tc.Name, truncateForEval(args, 500)))
+					b.WriteString(fmt.Sprintf("工具: %s, 参数: %s\n", tc.Name, truncateForEval(args, 500))) // tool args are usually short
 				}
 			} else {
-				b.WriteString(fmt.Sprintf("\n--- AI回答 #%d ---\n%s\n", msgNum, truncateForEval(msg.Content, 2000)))
+				b.WriteString(fmt.Sprintf("\n--- AI回答 #%d ---\n%s\n", msgNum, truncateForEval(msg.Content, 2000))) // limit user/tool/assistant content to avoid oversized prompts
 			}
 		case "tool":
 			msgNum++
-			b.WriteString(fmt.Sprintf("\n--- 工具返回结果 #%d ---\n%s\n", msgNum, truncateForEval(msg.Content, 2000)))
+			b.WriteString(fmt.Sprintf("\n--- 工具返回结果 #%d ---\n%s\n", msgNum, truncateForEval(msg.Content, 2000))) // limit user/tool/assistant content to avoid oversized prompts
 		}
 	}
 
 	b.WriteString("\n\n# 最终回答\n")
-	b.WriteString(truncateForEval(req.FinalContent, 3000))
+	b.WriteString(truncateForEval(req.FinalContent, 3000)) // final answer may be long but we cap it
 	b.WriteString("\n\n请根据以上信息，按照系统提示中的维度进行评分。")
 
 	return b.String()
 }
 
 func truncateForEval(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "... [truncated]"
+	return string(runes[:maxLen]) + "... [truncated]"
 }
 
 var codeBlockRe = regexp.MustCompile("(?s)```(?:json)?\\s*\\n(.*?)```")
@@ -231,7 +231,10 @@ func parseConfidenceScore(content string) (*ConfidenceScore, error) {
 }
 
 // FormatConfidenceBlock formats a ConfidenceScore as a UI message block.
-func FormatConfidenceBlock(score *ConfidenceScore) string {
+func FormatConfidenceBlock(score *ConfidenceScore) (string, error) {
+	if score == nil {
+		return "", fmt.Errorf("confidence score is nil")
+	}
 	data := map[string]any{
 		"messageType": "confidence",
 		"summary": map[string]any{
@@ -244,8 +247,7 @@ func FormatConfidenceBlock(score *ConfidenceScore) string {
 	}
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
-		logger.WarnCF("agent", "Failed to marshal confidence block", map[string]any{"error": err.Error()})
-		return ""
+		return "", fmt.Errorf("marshal confidence block: %w", err)
 	}
-	return fmt.Sprintf("\n\n---MESSAGE_START---\n%s\n---MESSAGE_END---", string(jsonBytes))
+	return fmt.Sprintf("\n\n---MESSAGE_START---\n%s\n---MESSAGE_END---", string(jsonBytes)), nil
 }
