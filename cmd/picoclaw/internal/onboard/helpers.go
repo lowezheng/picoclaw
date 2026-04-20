@@ -14,7 +14,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/credential"
 )
 
-func onboard(encrypt bool) {
+func onboard(encrypt bool, reset bool) {
 	configPath := internal.GetConfigPath()
 
 	configExists := false
@@ -78,7 +78,7 @@ func onboard(encrypt bool) {
 	}
 
 	workspace := cfg.WorkspacePath()
-	createWorkspaceTemplates(workspace)
+	createWorkspaceTemplates(workspace, reset)
 
 	cliui.PrintOnboardComplete(internal.Logo, encrypt, configPath)
 }
@@ -138,18 +138,21 @@ func setupSSHKey() error {
 	return nil
 }
 
-func createWorkspaceTemplates(workspace string) {
-	err := copyEmbeddedToTarget(workspace)
+func createWorkspaceTemplates(workspace string, reset bool) {
+	err := copyEmbeddedToTarget(workspace, reset)
 	if err != nil {
 		fmt.Printf("Error copying workspace templates: %v\n", err)
 	}
 }
 
-func copyEmbeddedToTarget(targetDir string) error {
+func copyEmbeddedToTarget(targetDir string, reset bool) error {
 	// Ensure target directory exists
 	if err := os.MkdirAll(targetDir, 0o755); err != nil {
-		return fmt.Errorf("Failed to create target directory: %w", err)
+		return fmt.Errorf("failed to create target directory: %w", err)
 	}
+
+	var skipped []string
+	var created []string
 
 	// Walk through all files in embed.FS
 	err := fs.WalkDir(embeddedFiles, "workspace", func(path string, d fs.DirEntry, err error) error {
@@ -162,35 +165,67 @@ func copyEmbeddedToTarget(targetDir string) error {
 			return nil
 		}
 
-		// Read embedded file
-		data, err := embeddedFiles.ReadFile(path)
+		relPath, err := filepath.Rel("workspace", path)
 		if err != nil {
-			return fmt.Errorf("Failed to read embedded file %s: %w", path, err)
+			return fmt.Errorf("failed to get relative path for %s: %v", path, err)
 		}
-
-		new_path, err := filepath.Rel("workspace", path)
-		if err != nil {
-			return fmt.Errorf("Failed to get relative path for %s: %v\n", path, err)
-		}
-		if new_path == "AGENTS.md" || new_path == "IDENTITY.md" {
+		if relPath == "AGENTS.md" || relPath == "IDENTITY.md" {
 			return nil
 		}
 
+		// Read embedded file
+		data, err := embeddedFiles.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("failed to read embedded file %s: %w", path, err)
+		}
+
 		// Build target file path
-		targetPath := filepath.Join(targetDir, new_path)
+		targetPath := filepath.Join(targetDir, relPath)
+
+		// Check if file already exists
+		exists := false
+		if _, err := os.Stat(targetPath); err == nil {
+			exists = true
+		}
 
 		// Ensure target file's directory exists
 		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-			return fmt.Errorf("Failed to create directory %s: %w", filepath.Dir(targetPath), err)
+			return fmt.Errorf("failed to create directory %s: %w", filepath.Dir(targetPath), err)
+		}
+
+		if exists && !reset {
+			skipped = append(skipped, relPath)
+			return nil
 		}
 
 		// Write file
 		if err := os.WriteFile(targetPath, data, 0o644); err != nil {
-			return fmt.Errorf("Failed to write file %s: %w", targetPath, err)
+			return fmt.Errorf("failed to write file %s: %w", targetPath, err)
 		}
-
+		created = append(created, relPath)
 		return nil
 	})
 
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Print report
+	if len(skipped) > 0 {
+		fmt.Println("\nThe following workspace files already exist and were skipped (use --reset to overwrite):")
+		for _, f := range skipped {
+			fmt.Printf("  - %s\n", f)
+		}
+	}
+	if len(created) > 0 {
+		fmt.Println("\nCreated the following workspace files:")
+		for _, f := range created {
+			fmt.Printf("  - %s\n", f)
+		}
+	}
+	if len(skipped) == 0 && len(created) == 0 {
+		fmt.Println("\nAll workspace files already exist. Use --reset to overwrite.")
+	}
+
+	return nil
 }

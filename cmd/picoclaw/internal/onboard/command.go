@@ -12,6 +12,7 @@ var embeddedFiles embed.FS
 
 func NewOnboardCommand() *cobra.Command {
 	var encrypt bool
+	var reset bool
 
 	cmd := &cobra.Command{
 		Use:     "onboard",
@@ -20,7 +21,7 @@ func NewOnboardCommand() *cobra.Command {
 		// Run without subcommands → original onboard flow
 		Run: func(cmd *cobra.Command, args []string) {
 			if len(args) == 0 {
-				onboard(encrypt)
+				onboard(encrypt, reset)
 			} else {
 				_ = cmd.Help()
 			}
@@ -29,6 +30,8 @@ func NewOnboardCommand() *cobra.Command {
 
 	cmd.Flags().BoolVar(&encrypt, "enc", false,
 		"Enable credential encryption (generates SSH key and prompts for passphrase)")
+	cmd.Flags().BoolVar(&reset, "reset", false,
+		"Force overwrite existing workspace template files")
 
 	return cmd
 }

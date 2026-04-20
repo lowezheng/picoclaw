@@ -331,14 +331,14 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 	// Read stream events and emit SSE events.
 	msgSeq := 0
 	var (
-		hasActiveTextItem      bool
-		activeTextItemID       string
-		activeTextItemIndex    int
-		lastTextContent        string
-		hasActiveReasoningItem bool
-		activeReasoningItemID  string
+		hasActiveTextItem        bool
+		activeTextItemID         string
+		activeTextItemIndex      int
+		lastTextContent          string
+		hasActiveReasoningItem   bool
+		activeReasoningItemID    string
 		activeReasoningItemIndex int
-		lastReasoningContent   string
+		lastReasoningContent     string
 	)
 
 	// closeActiveTextItem finalizes an in-progress streaming text item.
@@ -702,11 +702,11 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 			msgSeq++
 
 			addedItem := ResponseItem{
-				Type:     "function_call",
-				ID:       itemID,
-				Status:   "in_progress",
-				CallID:   ev.callID,
-				Name:     ev.name,
+				Type:   "function_call",
+				ID:     itemID,
+				Status: "in_progress",
+				CallID: ev.callID,
+				Name:   ev.name,
 			}
 			writeSSEEvent(w, "response.output_item.added", ResponseEvent{
 				Type:           "response.output_item.added",

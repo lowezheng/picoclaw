@@ -1164,6 +1164,16 @@ func (s *telegramStreamer) Update(ctx context.Context, content string) error {
 	return nil
 }
 
+func (s *telegramStreamer) UpdateReasoning(_ context.Context, _ string) error {
+	// Telegram does not display reasoning separately; no-op.
+	return nil
+}
+
+func (s *telegramStreamer) UpdateToolCall(_ context.Context, _, _, _ string) error {
+	// Telegram does not display tool calls in the stream; no-op.
+	return nil
+}
+
 func (s *telegramStreamer) Finalize(ctx context.Context, content string) error {
 	htmlContent := markdownToTelegramHTML(content)
 	tgMsg := tu.Message(tu.ID(s.chatID), htmlContent)

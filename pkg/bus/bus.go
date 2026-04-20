@@ -32,6 +32,8 @@ type StreamDelegate interface {
 // Defined here so the agent loop can use it without importing pkg/channels.
 type Streamer interface {
 	Update(ctx context.Context, content string) error
+	UpdateReasoning(ctx context.Context, accumulatedReasoning string) error
+	UpdateToolCall(ctx context.Context, callID, name, arguments string) error
 	Finalize(ctx context.Context, content string) error
 	Cancel(ctx context.Context)
 }

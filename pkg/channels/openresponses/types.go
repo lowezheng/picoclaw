@@ -4,6 +4,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
 // --- Request Types ---
@@ -228,6 +230,9 @@ func (s *pendingStream) push(ev streamEvent) (ok bool) {
 	case s.events <- ev:
 		return true
 	default:
+		logger.WarnCF("openresponses", "pendingStream.push DROPPED (buffer full)", map[string]any{
+			"kind": ev.kind,
+		})
 		return false
 	}
 }

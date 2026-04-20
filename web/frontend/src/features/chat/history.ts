@@ -1,5 +1,6 @@
 import { getSessionHistory } from "@/api/sessions"
 import { normalizeUnixTimestamp } from "@/features/chat/state"
+import { detectToolCall } from "@/lib/detect-tool-call"
 import type { ChatAttachment, ChatMessage } from "@/store/chat"
 
 function toChatAttachments(media?: string[]): ChatAttachment[] | undefined {
@@ -14,20 +15,38 @@ function toChatAttachments(media?: string[]): ChatAttachment[] | undefined {
   return attachments.length > 0 ? attachments : undefined
 }
 
+function inferToolCallFromContent(content: string): ChatMessage["toolCall"] {
+  const detected = detectToolCall(content)
+  if (!detected) return undefined
+  return {
+    callId: "",
+    name: detected.toolName,
+    arguments: detected.output,
+  }
+}
+
 export async function loadSessionMessages(
   sessionId: string,
 ): Promise<ChatMessage[]> {
   const detail = await getSessionHistory(sessionId)
   const fallbackTime = detail.updated
 
-  return detail.messages.map((message, index) => ({
-    id: `hist-${index}-${Date.now()}`,
-    role: message.role,
-    content: message.content,
-    kind: message.role === "assistant" ? "normal" : undefined,
-    attachments: toChatAttachments(message.media),
-    timestamp: fallbackTime,
-  }))
+  return detail.messages.map((message, index) => {
+    const toolCall =
+      message.role === "assistant"
+        ? inferToolCallFromContent(message.content)
+        : undefined
+
+    return {
+      id: `hist-${index}-${Date.now()}`,
+      role: message.role,
+      content: message.content,
+      kind: message.role === "assistant" ? "normal" : undefined,
+      attachments: toChatAttachments(message.media),
+      timestamp: fallbackTime,
+      ...(toolCall && { toolCall }),
+    }
+  })
 }
 
 function normalizeMessageTimestamp(timestamp: number | string): string {

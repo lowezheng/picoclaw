@@ -20,6 +20,11 @@ export interface ChatMessage {
   timestamp: number | string
   kind?: AssistantMessageKind
   attachments?: ChatAttachment[]
+  toolCall?: {
+    callId: string
+    name: string
+    arguments: string
+  }
 }
 
 export type ConnectionState = "idle" | "sending" | "error"

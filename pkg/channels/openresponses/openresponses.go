@@ -33,9 +33,9 @@ type OpenResponsesChannel struct {
 
 // conversationState tracks a single active conversation request.
 type conversationState struct {
-	stream     *pendingStream
-	done       chan struct{}
-	active     atomic.Bool
+	stream      *pendingStream
+	done        chan struct{}
+	active      atomic.Bool
 	hasStreamer atomic.Bool
 }
 
@@ -108,6 +108,11 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 	c.convMu.Unlock()
 
 	if !found {
+		logger.WarnCF("openresponses", "Send: conversation not found, dropping message",
+			map[string]any{
+				"conversation_id": conversationID,
+				"message_kind":    msg.Context.Raw["message_kind"],
+			})
 		return nil, nil
 	}
 
@@ -121,7 +126,7 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 		"message_kind":    raw["message_kind"],
 		"content_preview": truncateString(msg.Content, 200),
 	})
-	if st.hasStreamer.Load() && raw["message_kind"] != "thought" && raw["message_kind"] != "function_call" && raw["message_kind"] != "turn_end" {
+	if st.hasStreamer.Load() && raw["message_kind"] != "thought" && raw["message_kind"] != "function_call" && raw["message_kind"] != "turn_end" && raw["message_kind"] != "tool_timing" {
 		logger.DebugCF("openresponses", "Send skipped (streamer active, not thought/fc/turn_end)", map[string]any{
 			"conversation_id": conversationID,
 		})
@@ -385,10 +390,11 @@ func (c *OpenResponsesChannel) BeginStream(ctx context.Context, chatID string) (
 
 // openResponsesStreamer bridges bus.Streamer to pendingStream.
 type openResponsesStreamer struct {
-	channel     *OpenResponsesChannel
-	convID      string
-	stream      *pendingStream
-	lastContent string
+	channel       *OpenResponsesChannel
+	convID        string
+	stream        *pendingStream
+	lastContent   string
+	lastReasoning string
 }
 
 func (s *openResponsesStreamer) Update(ctx context.Context, accumulated string) error {
@@ -405,6 +411,26 @@ func (s *openResponsesStreamer) Update(ctx context.Context, accumulated string) 
 	})
 	// Push delta (not accumulated) so handler emits true incremental SSE
 	s.stream.push(streamEvent{kind: eventKindTextDelta, content: delta})
+	return nil
+}
+
+func (s *openResponsesStreamer) UpdateReasoning(ctx context.Context, accumulatedReasoning string) error {
+	if len(accumulatedReasoning) <= len(s.lastReasoning) {
+		return nil
+	}
+	delta := accumulatedReasoning[len(s.lastReasoning):]
+	s.lastReasoning = accumulatedReasoning
+
+	logger.DebugCF("openresponses", "Streamer.UpdateReasoning push reasoning delta", map[string]any{
+		"conversation_id": s.convID,
+		"delta_preview":   truncateString(delta, 200),
+	})
+	s.stream.push(streamEvent{kind: eventKindReasoning, content: delta})
+	return nil
+}
+
+func (s *openResponsesStreamer) UpdateToolCall(ctx context.Context, callID, name, arguments string) error {
+	s.stream.push(streamEvent{kind: eventKindFunctionCall, callID: callID, name: name, arguments: arguments})
 	return nil
 }
 

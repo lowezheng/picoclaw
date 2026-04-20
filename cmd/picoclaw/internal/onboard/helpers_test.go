@@ -9,7 +9,7 @@ import (
 func TestCopyEmbeddedToTargetUsesStructuredAgentFiles(t *testing.T) {
 	targetDir := t.TempDir()
 
-	if err := copyEmbeddedToTarget(targetDir); err != nil {
+	if err := copyEmbeddedToTarget(targetDir, false); err != nil {
 		t.Fatalf("copyEmbeddedToTarget() error = %v", err)
 	}
 

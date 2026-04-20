@@ -323,6 +323,24 @@ type finalizeHookStreamer struct {
 	onFinalize func()
 }
 
+func (s *finalizeHookStreamer) UpdateReasoning(ctx context.Context, reasoning string) error {
+	if st, ok := s.Streamer.(interface {
+		UpdateReasoning(context.Context, string) error
+	}); ok {
+		return st.UpdateReasoning(ctx, reasoning)
+	}
+	return nil
+}
+
+func (s *finalizeHookStreamer) UpdateToolCall(ctx context.Context, callID, name, arguments string) error {
+	if st, ok := s.Streamer.(interface {
+		UpdateToolCall(context.Context, string, string, string) error
+	}); ok {
+		return st.UpdateToolCall(ctx, callID, name, arguments)
+	}
+	return nil
+}
+
 func (s *finalizeHookStreamer) Finalize(ctx context.Context, content string) error {
 	if err := s.Streamer.Finalize(ctx, content); err != nil {
 		return err

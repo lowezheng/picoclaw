@@ -98,7 +98,7 @@ function parseSSEEventBlock(block: string): { event: string; data: string } | nu
 
 export async function sendOpenResponsesMessage(
   request: OpenResponsesChatRequest,
-  onStreamEvent?: (event: { type: string; outputIndex?: number; delta?: string; itemType?: string }) => void,
+  onStreamEvent?: (event: { type: string; outputIndex?: number; delta?: string; itemType?: string; callId?: string; name?: string }) => void,
 ): Promise<string> {
   const res = await launcherFetch("/api/openresponses/chat", {
     method: "POST",
@@ -161,12 +161,14 @@ export async function sendOpenResponsesMessage(
 
       if (parsedBlock.event === "response.output_item.added") {
         try {
-          const parsedJSON = JSON.parse(parsedBlock.data) as { output_index?: number; item?: { type?: string } }
+          const parsedJSON = JSON.parse(parsedBlock.data) as { output_index?: number; item?: { type?: string; call_id?: string; name?: string } }
           if (typeof parsedJSON.output_index === "number") {
             onStreamEvent?.({
               type: "item_added",
               outputIndex: parsedJSON.output_index,
               itemType: parsedJSON.item?.type,
+              callId: parsedJSON.item?.call_id,
+              name: parsedJSON.item?.name,
             })
           }
         } catch (err) {
@@ -191,6 +193,32 @@ export async function sendOpenResponsesMessage(
           }
         } catch (err) {
           console.warn("Failed to parse SSE delta JSON:", parsedBlock.data, err)
+        }
+      } else if (parsedBlock.event === "response.function_call_arguments.delta") {
+        try {
+          const parsedJSON = JSON.parse(parsedBlock.data) as { output_index?: number; delta?: string }
+          if (typeof parsedJSON.output_index === "number" && typeof parsedJSON.delta === "string") {
+            onStreamEvent?.({
+              type: "function_call_delta",
+              outputIndex: parsedJSON.output_index,
+              delta: parsedJSON.delta,
+            })
+          }
+        } catch (err) {
+          console.warn("Failed to parse SSE function_call_arguments.delta JSON:", parsedBlock.data, err)
+        }
+      } else if (parsedBlock.event === "response.function_call_arguments.done") {
+        try {
+          const parsedJSON = JSON.parse(parsedBlock.data) as { output_index?: number; part?: { arguments?: string } }
+          if (typeof parsedJSON.output_index === "number") {
+            onStreamEvent?.({
+              type: "function_call_done",
+              outputIndex: parsedJSON.output_index,
+              delta: parsedJSON.part?.arguments,
+            })
+          }
+        } catch (err) {
+          console.warn("Failed to parse SSE function_call_arguments.done JSON:", parsedBlock.data, err)
         }
       } else if (parsedBlock.event === "response.content_part.done") {
         try {

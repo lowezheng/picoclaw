@@ -24,6 +24,10 @@ function adjustPendingCount(delta: number): number {
   return pendingRequestCount
 }
 
+function formatToolCallContent(name: string, args: string): string {
+  return `🔧 \`${name}\`\n\`\`\`\n${args}\n\`\`\``
+}
+
 interface SendChatMessageInput {
   content: string
   attachments?: ChatAttachment[]
@@ -71,7 +75,7 @@ export async function sendOpenResponsesChatMessage({
 
     const assistantMessages = new Map<
       number,
-      { id: string; content: string; kind?: "thought" }
+      { id: string; content: string; kind?: "thought"; callId?: string; name?: string; toolArgs?: string }
     >()
     const assistantImages = new Map<number, string[]>()
 
@@ -83,8 +87,27 @@ export async function sendOpenResponsesChatMessage({
       },
       (event) => {
         if (event.type === "item_added" && typeof event.outputIndex === "number") {
-          // function_call items have no displayable text; skip them to avoid empty bubbles.
           if (event.itemType === "function_call") {
+            const msgId = `resp-${Date.now()}-${event.outputIndex}`
+            assistantMessages.set(event.outputIndex, {
+              id: msgId,
+              content: "",
+              callId: event.callId,
+              name: event.name,
+              toolArgs: "",
+            })
+            updateOpenResponsesChatStore((prev) => ({
+              messages: [
+                ...prev.messages,
+                {
+                  id: msgId,
+                  role: "assistant",
+                  content: "",
+                  timestamp: Date.now(),
+                  toolCall: { callId: event.callId!, name: event.name!, arguments: "" },
+                },
+              ],
+            }))
             return
           }
           if (!assistantMessages.has(event.outputIndex)) {
@@ -136,6 +159,32 @@ export async function sendOpenResponsesChatMessage({
               ],
             }
           })
+        } else if (event.type === "function_call_delta" && typeof event.outputIndex === "number" && event.delta) {
+          const msg = assistantMessages.get(event.outputIndex)
+          if (msg) {
+            msg.toolArgs = (msg.toolArgs || "") + event.delta
+            msg.content = formatToolCallContent(msg.name || "", msg.toolArgs)
+            updateOpenResponsesChatStore((prev) => ({
+              messages: prev.messages.map((m) =>
+                m.id === msg.id && m.toolCall
+                  ? { ...m, content: msg.content, toolCall: { ...m.toolCall, arguments: msg.toolArgs! } }
+                  : m,
+              ),
+            }))
+          }
+        } else if (event.type === "function_call_done" && typeof event.outputIndex === "number") {
+          const msg = assistantMessages.get(event.outputIndex)
+          if (msg && event.delta) {
+            msg.toolArgs = event.delta
+            msg.content = formatToolCallContent(msg.name || "", msg.toolArgs)
+            updateOpenResponsesChatStore((prev) => ({
+              messages: prev.messages.map((m) =>
+                m.id === msg.id && m.toolCall
+                  ? { ...m, content: msg.content, toolCall: { ...m.toolCall, arguments: event.delta! } }
+                  : m,
+              ),
+            }))
+          }
         } else if (event.type === "image" && typeof event.outputIndex === "number" && event.delta) {
           const images = assistantImages.get(event.outputIndex) ?? []
           images.push(event.delta)
@@ -160,7 +209,8 @@ export async function sendOpenResponsesChatMessage({
     // Ensure final content is set for all created messages
     updateOpenResponsesChatStore((prev) => {
       let messages = prev.messages
-      for (const [outputIndex, { id, content, kind }] of assistantMessages) {
+      for (const [outputIndex, msgData] of assistantMessages) {
+        const { id, content, kind, callId, name, toolArgs } = msgData
         const existing = messages.find((m) => m.id === id)
         const finalContent = content
         const images = assistantImages.get(outputIndex) ?? []
@@ -168,10 +218,13 @@ export async function sendOpenResponsesChatMessage({
           images.length > 0
             ? images.map((url) => ({ type: "image" as const, url }))
             : undefined
+        const toolCall = callId && name
+          ? { callId, name, arguments: toolArgs || "" }
+          : undefined
         if (existing) {
           messages = messages.map((m) =>
             m.id === id
-              ? { ...m, content: finalContent, attachments }
+              ? { ...m, content: finalContent, attachments, ...(toolCall && { toolCall }) }
               : m,
           )
         } else {
@@ -183,6 +236,7 @@ export async function sendOpenResponsesChatMessage({
               content: finalContent,
               kind,
               attachments,
+              ...(toolCall && { toolCall }),
               timestamp: Date.now(),
             },
           ]

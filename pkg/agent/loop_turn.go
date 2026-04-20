@@ -620,7 +620,9 @@ turnLoop:
 		if ts.channel == "pico" {
 			go al.publishPicoReasoning(turnCtx, reasoningContent, ts.chatID)
 		} else if ts.channel == "openresponses" {
-			go al.publishOpenResponsesReasoning(turnCtx, reasoningContent, ts.chatID)
+			if activeStreamer == nil {
+				go al.publishOpenResponsesReasoning(turnCtx, reasoningContent, ts.chatID)
+			}
 		} else {
 			go al.handleReasoning(
 				turnCtx,
@@ -761,29 +763,42 @@ turnLoop:
 			ts.ingestMessage(turnCtx, al, assistantMsg)
 		}
 
-		// Publish function_call events to the openresponses channel so SSE
-		// streams emit proper function_call output items per the spec.
-		if ts.channel == "openresponses" && al.bus != nil && len(normalizedToolCalls) > 0 {
-			pubCtx, pubCancel := context.WithTimeout(turnCtx, 3*time.Second)
-			for _, tc := range normalizedToolCalls {
-				argsJSON, _ := json.Marshal(tc.Arguments)
-				_ = al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
-					Channel: ts.channel,
-					ChatID:  ts.chatID,
-					Context: bus.InboundContext{
+		// Publish function_call events.
+		// When a streamer is active, push directly through it so the event
+		// travels the same short path as text/reasoning deltas. Otherwise
+		// fall back to the asynchronous outbound bus.
+		if len(normalizedToolCalls) > 0 {
+			if activeStreamer != nil {
+				for _, tc := range normalizedToolCalls {
+					argsJSON, _ := json.Marshal(tc.Arguments)
+					if err := activeStreamer.UpdateToolCall(turnCtx, tc.ID, tc.Name, string(argsJSON)); err != nil {
+						logger.DebugCF("agent", "streamer UpdateToolCall failed", map[string]any{
+							"error": err.Error(),
+						})
+					}
+				}
+			} else if al.bus != nil && ts.channel == "openresponses" {
+				pubCtx, pubCancel := context.WithTimeout(turnCtx, 3*time.Second)
+				for _, tc := range normalizedToolCalls {
+					argsJSON, _ := json.Marshal(tc.Arguments)
+					_ = al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
 						Channel: ts.channel,
 						ChatID:  ts.chatID,
-						Raw: map[string]string{
-							metadataKeyMessageKind: messageKindFunctionCall,
-							"call_id":              tc.ID,
-							"name":                 tc.Name,
-							"arguments":            string(argsJSON),
+						Context: bus.InboundContext{
+							Channel: ts.channel,
+							ChatID:  ts.chatID,
+							Raw: map[string]string{
+								metadataKeyMessageKind: messageKindFunctionCall,
+								"call_id":              tc.ID,
+								"name":                 tc.Name,
+								"arguments":            string(argsJSON),
+							},
 						},
-					},
-					Content: "",
-				})
+						Content: "",
+					})
+				}
+				pubCancel()
 			}
-			pubCancel()
 		}
 
 		ts.setPhase(TurnPhaseTools)
@@ -1114,7 +1129,7 @@ turnLoop:
 
 			argsJSON, _ := json.Marshal(toolArgs)
 			argsPreview := utils.Truncate(string(argsJSON), 200)
-			logger.InfoCF("agent", fmt.Sprintf("Tool call: %s(%s)", toolName, argsPreview),
+			logger.InfoCF("agent", fmt.Sprintf("Tool call start: %s(%s)", toolName, argsPreview),
 				map[string]any{
 					"agent_id":  ts.agent.ID,
 					"tool":      toolName,
@@ -1348,6 +1363,18 @@ turnLoop:
 			if len(toolResult.Media) > 0 && !toolResult.ResponseHandled {
 				toolResultMsg.Media = append(toolResultMsg.Media, toolResult.Media...)
 			}
+			logger.InfoCF("agent", fmt.Sprintf("Tool call done: %s | took=%s | for_llm=%d | for_user=%d | error=%v | async=%v",
+				toolName, toolDuration, len(contentForLLM), len(toolResult.ForUser), toolResult.IsError, toolResult.Async),
+				map[string]any{
+					"agent_id":  ts.agent.ID,
+					"tool":      toolName,
+					"iteration": iteration,
+					"duration":  toolDuration.String(),
+					"for_llm":   len(contentForLLM),
+					"for_user":  len(toolResult.ForUser),
+					"is_error":  toolResult.IsError,
+					"async":     toolResult.Async,
+				})
 			al.emitEvent(
 				EventKindToolExecEnd,
 				ts.eventMeta("runTurn", "turn.tool.end"),
@@ -1360,6 +1387,42 @@ turnLoop:
 					Async:      toolResult.Async,
 				},
 			)
+
+			// Send tool completion timing to chat channel
+			if al.cfg.Agents.Defaults.IsToolFeedbackEnabled() &&
+				ts.channel != "" &&
+				!ts.opts.SuppressToolFeedback {
+				statusEmoji := "✅"
+				if toolResult.IsError {
+					statusEmoji = "❌"
+				}
+				var timingMsg string
+				if toolResult.Async {
+					timingMsg = fmt.Sprintf("%s `%s` async scheduled (duration: -1)", statusEmoji, toolName)
+				} else {
+					timingMsg = fmt.Sprintf("%s `%s` completed in %s", statusEmoji, toolName, toolDuration.Round(time.Millisecond))
+				}
+				tmCtx, tmCancel := context.WithTimeout(turnCtx, 3*time.Second)
+				agentID, sessionKey, scope := outboundTurnMetadata(ts.agent.ID, ts.sessionKey, ts.opts.Dispatch.SessionScope)
+				outboundCtx := outboundContextFromInbound(
+					ts.opts.Dispatch.InboundContext,
+					ts.channel,
+					ts.chatID,
+					ts.opts.Dispatch.ReplyToMessageID(),
+				)
+				outboundCtx.Raw["message_kind"] = "tool_timing"
+				_ = al.bus.PublishOutbound(tmCtx, bus.OutboundMessage{
+					Channel:    ts.channel,
+					ChatID:     ts.chatID,
+					Context:    outboundCtx,
+					AgentID:    agentID,
+					SessionKey: sessionKey,
+					Scope:      scope,
+					Content:    timingMsg,
+				})
+				tmCancel()
+			}
+
 			messages = append(messages, toolResultMsg)
 			if !ts.opts.NoHistory {
 				ts.agent.Sessions.AddFullMessage(ts.sessionKey, toolResultMsg)
@@ -1599,55 +1662,39 @@ func (al *AgentLoop) callLLMStream(
 	opts map[string]any,
 	channel, chatID string,
 ) (*providers.LLMResponse, error) {
-	var content strings.Builder
-	var lastReasoning string
-	var lastReasoningLen int
+	var content string
 	var lastContentLen int
+	var lastReasoningLen int
 	var contentChunks = 0
 	var reasoningChunks = 0
 	resp, err := sp.ChatStream(ctx, messages, toolDefs, model, opts,
 		func(accumulated, reasoning string) {
-			if reasoning != "" {
+			// reasoning: only log/push when it actually grows
+			if reasoning != "" && len(reasoning) > lastReasoningLen {
 				reasoningChunks++
-				if reasoningChunks <= 5 || reasoningChunks%10 == 0 {
+				if reasoningChunks <= 5 || reasoningChunks%1 == 0 {
 					logger.InfoCF("LLM", fmt.Sprintf("[reasoning chunk %3d: %4d] %q", reasoningChunks, len(reasoning), reasoning), nil)
 				}
-			}
-			if accumulated != "" {
-				contentChunks++
-				if contentChunks <= 5 || contentChunks%10 == 0 {
-					logger.InfoCF("LLM", fmt.Sprintf("[content chunk %3d: %4d]  %q", contentChunks, len(accumulated), accumulated), nil)
-				}
-			}
-
-			// reasoning: only push when it actually grows
-			if len(reasoning) > lastReasoningLen {
-				delta := reasoning
-				if lastReasoningLen > 0 && strings.HasPrefix(reasoning, lastReasoning) {
-					delta = reasoning[lastReasoningLen:]
-				}
-				lastReasoning = reasoning
-				lastReasoningLen = len(reasoning)
-				outCtx, outCancel := context.WithTimeout(ctx, 3*time.Second)
-				_ = al.bus.PublishOutbound(outCtx, bus.OutboundMessage{
-					Channel: channel,
-					ChatID:  chatID,
-					Content: delta,
-					Context: bus.InboundContext{Raw: map[string]string{"message_kind": "thought"}},
-				})
-				outCancel()
-			}
-
-			// content: only push when it actually grows
-			if len(accumulated) > lastContentLen {
-				if updateErr := streamer.Update(ctx, accumulated); updateErr != nil {
-					logger.DebugCF("agent", "streamer update failed", map[string]any{
+				if updateErr := streamer.UpdateReasoning(ctx, reasoning); updateErr != nil {
+					logger.DebugCF("agent", "streamer UpdateReasoning failed", map[string]any{
 						"error": updateErr.Error(),
 					})
 				}
-				if len(accumulated) > content.Len() {
-					content.WriteString(accumulated[content.Len():])
+				lastReasoningLen = len(reasoning)
+			}
+
+			// content: only push when it actually grows
+			if accumulated != "" && len(accumulated) > lastContentLen {
+				contentChunks++
+				if contentChunks <= 5 || contentChunks%1 == 0 {
+					logger.InfoCF("LLM", fmt.Sprintf("[content chunk %3d: %4d]  %q", contentChunks, len(accumulated), accumulated), nil)
 				}
+				if updateErr := streamer.Update(ctx, accumulated); updateErr != nil {
+					logger.DebugCF("agent", "streamer Update failed", map[string]any{
+						"error": updateErr.Error(),
+					})
+				}
+				content = accumulated
 				lastContentLen = len(accumulated)
 			}
 		},
@@ -1658,8 +1705,8 @@ func (al *AgentLoop) callLLMStream(
 	}
 
 	// Defensive: ensure resp.Content matches what was actually streamed
-	if resp != nil && content.Len() > 0 {
-		resp.Content = content.String()
+	if resp != nil && len(content) > 0 {
+		resp.Content = content
 	}
 
 	return resp, nil

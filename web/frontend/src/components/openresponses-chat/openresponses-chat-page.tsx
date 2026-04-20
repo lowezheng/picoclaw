@@ -18,6 +18,7 @@ import { useOpenResponsesChat } from "@/components/openresponses-chat/use-openre
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { useGateway } from "@/hooks/use-gateway"
+import { detectToolCall } from "@/lib/detect-tool-call"
 import type { ChatAttachment } from "@/store/openresponses-chat"
 
 const MAX_IMAGE_SIZE_BYTES = 7 * 1024 * 1024
@@ -79,34 +80,6 @@ function resolveChatInputDisabledReason({
 
   if (connectionState === "error") {
     return "websocketError"
-  }
-
-  return null
-}
-
-// Known tool names that produce structured output in the chat
-const KNOWN_TOOL_NAMES = ["exec", "web_search", "spawn", "mcp"]
-
-/**
- * Detect if a message content looks like a tool call output.
- * Since the backend sends tool results as plain text without metadata,
- * we use heuristics: content that starts with a known tool name
- * followed by structured output patterns.
- */
-function detectToolCall(content: string): { toolName: string; args: string; output: string } | null {
-  if (!content || content.length < 3) return null
-  const trimmed = content.trim()
-  const firstLine = trimmed.split("\n")[0]
-
-  for (const name of KNOWN_TOOL_NAMES) {
-    if (firstLine.toLowerCase().startsWith(name)) {
-      const rest = trimmed.slice(firstLine.length).trim()
-      return {
-        toolName: name,
-        args: firstLine,
-        output: rest || firstLine,
-      }
-    }
   }
 
   return null
@@ -307,7 +280,14 @@ export function OpenResponsesChatPage() {
           {messages.map((msg) => {
             const toolCall =
               msg.role === "assistant" && msg.kind !== "thought"
-                ? detectToolCall(msg.content)
+                ? detectToolCall(msg.content) ||
+                  (msg.toolCall
+                    ? {
+                        toolName: msg.toolCall.name,
+                        args: msg.toolCall.name,
+                        output: msg.toolCall.arguments,
+                      }
+                    : null)
                 : null
 
             return (

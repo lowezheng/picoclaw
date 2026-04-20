@@ -932,6 +932,16 @@ func (s *wecomStreamer) Update(ctx context.Context, content string) error {
 	return nil
 }
 
+func (s *wecomStreamer) UpdateReasoning(_ context.Context, _ string) error {
+	// WeCom does not display reasoning separately; no-op.
+	return nil
+}
+
+func (s *wecomStreamer) UpdateToolCall(_ context.Context, _, _, _ string) error {
+	// WeCom does not display tool calls in the stream; no-op.
+	return nil
+}
+
 func (s *wecomStreamer) Finalize(ctx context.Context, content string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
