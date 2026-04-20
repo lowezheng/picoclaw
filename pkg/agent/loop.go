@@ -55,6 +55,7 @@ type AgentLoop struct {
 	pendingSkills       sync.Map
 	mu                  sync.RWMutex
 	confidenceEvaluator *ConfidenceEvaluator
+	confidenceOnce      sync.Once
 
 	// workerSem limits concurrent turn processing workers.
 	workerSem chan struct{}
@@ -387,6 +388,10 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 
 	al.mu.Unlock()
 
+	// Reset confidence evaluator so it re-initializes with the new provider
+	al.confidenceEvaluator = nil
+	al.confidenceOnce = sync.Once{}
+
 	oldMCPManager := al.mcp.reset()
 	al.hookRuntime.reset(al)
 	configureHookManagerFromConfig(al.hooks, cfg)
@@ -608,27 +613,31 @@ func (al *AgentLoop) runAgentLoop(
 
 // initConfidenceEvaluator creates the confidence evaluator for the given agent.
 func (al *AgentLoop) initConfidenceEvaluator(agent *AgentInstance) {
-	cfg := al.GetConfig()
-	if !cfg.Agents.Defaults.IsConfidenceScoreEnabled("") {
-		return
-	}
+	al.confidenceOnce.Do(func() {
+		cfg := al.GetConfig()
+		if !cfg.Agents.Defaults.IsConfidenceScoreEnabled("") {
+			return
+		}
 
-	// Use the agent's light provider if available
-	provider := agent.Provider
-	model := agent.Model
-	if agent.LightProvider != nil && agent.Router != nil {
-		provider = agent.LightProvider
-		model = agent.Router.LightModel()
-	}
+		provider := agent.Provider
+		model := agent.Model
+		if agent.LightProvider != nil && agent.Router != nil {
+			provider = agent.LightProvider
+			model = agent.Router.LightModel()
+		} else if agent.LightProvider != nil && agent.Router == nil {
+			logger.DebugCF("agent", "LightProvider available but Router is nil, using primary provider for confidence",
+				map[string]any{"agent_id": agent.ID})
+		}
 
-	if provider == nil {
-		logger.WarnCF("agent", "Confidence score enabled but no provider available", nil)
-		return
-	}
+		if provider == nil {
+			logger.WarnCF("agent", "Confidence score enabled but no provider available", nil)
+			return
+		}
 
-	al.confidenceEvaluator = NewConfidenceEvaluator(provider, model)
-	logger.InfoCF("agent", "Confidence evaluator initialized",
-		map[string]any{"model": model, "agent_id": agent.ID})
+		al.confidenceEvaluator = NewConfidenceEvaluator(provider, model)
+		logger.InfoCF("agent", "Confidence evaluator initialized",
+			map[string]any{"model": model, "agent_id": agent.ID})
+	})
 }
 
 // Helper to extract provider from registry for cleanup
