@@ -87,7 +87,7 @@ dev-frontend:
 
 # Start backend dev server
 dev-backend:
-	cd $(BACKEND_DIR) && PICOCLAW_BINARY="$(PICOCLAW_BINARY)" ${WEB_GO} run -ldflags "$(LAUNCHER_LDFLAGS)" . $(BACKEND_ARGS)
+	cd $(BACKEND_DIR) && PICOCLAW_BINARY="$(PICOCLAW_BINARY)" ${WEB_GO} run -ldflags "$(LAUNCHER_LDFLAGS)" . -d $(BACKEND_ARGS)
 
 # Build frontend and embed into Go binary
 build: build-frontend
