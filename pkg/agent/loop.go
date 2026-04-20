@@ -114,6 +114,8 @@ const (
 	messageKindThought         = "thought"
 	messageKindTurnEnd         = "turn_end"
 	messageKindFunctionCall    = "function_call"
+	messageKindLLMTiming       = "llm_timing"
+	messageKindToolTiming      = "tool_timing"
 	metadataKeyAccountID       = "account_id"
 	metadataKeyGuildID         = "guild_id"
 	metadataKeyTeamID          = "team_id"

@@ -126,8 +126,8 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 		"message_kind":    raw["message_kind"],
 		"content_preview": truncateString(msg.Content, 200),
 	})
-	if st.hasStreamer.Load() && raw["message_kind"] != "thought" && raw["message_kind"] != "function_call" && raw["message_kind"] != "turn_end" && raw["message_kind"] != "tool_timing" {
-		logger.DebugCF("openresponses", "Send skipped (streamer active, not thought/fc/turn_end)", map[string]any{
+	if st.hasStreamer.Load() && raw["message_kind"] != "thought" && raw["message_kind"] != "function_call" && raw["message_kind"] != "turn_end" && raw["message_kind"] != "tool_timing" && raw["message_kind"] != "llm_timing" {
+		logger.DebugCF("openresponses", "Send skipped (streamer active, not thought/fc/turn_end/timing)", map[string]any{
 			"conversation_id": conversationID,
 		})
 		return nil, nil

@@ -49,7 +49,7 @@ curl -X POST http://localhost:18790/v1/responses \
 
 ```bash
 curl -X POST http://localhost:18790/v1/responses \
-  -H "Authorization: Bearer 24cdcc7e2ed4ab5f67ed12301685a412" \
+  -H "Authorization: Bearer 570694ff7910121aaf9feea5f42e6263" \
   -H "Content-Type: application/json" \
   -d '{
     "input": "What is the weather like?",
@@ -60,8 +60,8 @@ curl -X POST http://localhost:18790/v1/responses \
 ### 3. SSE streaming request
 
 ```bash
-curl -N -v -X POST http://localhost:18790/v1/responses \
-  -H "Authorization: Bearer 570694ff7910121aaf9feea5f42e6263" \
+curl -N -v -X POST http://10.8.34.191:28790/v1/responses \
+  -H "Authorization: Bearer 3db05261ae20c45825aedcb832a67aef" \
   -H "Content-Type: application/json" \
   -d '{
     "input": "今天天气",

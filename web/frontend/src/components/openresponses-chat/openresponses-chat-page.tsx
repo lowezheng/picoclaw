@@ -306,6 +306,9 @@ export function OpenResponsesChatPage() {
                       isThought={msg.kind === "thought"}
                       timestamp={msg.timestamp}
                       attachments={msg.attachments}
+                      onSelectOption={async (option) => {
+                        await sendMessage({ content: option })
+                      }}
                     />
                   )
                 ) : (

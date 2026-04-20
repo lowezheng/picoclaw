@@ -8,8 +8,11 @@ import rehypeSanitize from "rehype-sanitize"
 import remarkGfm from "remark-gfm"
 
 import { Button } from "@/components/ui/button"
+import { DataQualityBlock } from "@/components/chat/message-blocks/dataquality-block"
+import { SelectionBlock } from "@/components/chat/message-blocks/selection-block"
 import { formatMessageTime } from "@/hooks/use-pico-chat"
 import { cn } from "@/lib/utils"
+import { parseMessageBlocks } from "@/lib/parse-message-blocks"
 import type { ChatAttachment } from "@/store/openresponses-chat"
 
 interface AssistantMessageProps {
@@ -17,6 +20,7 @@ interface AssistantMessageProps {
   isThought?: boolean
   timestamp?: string | number
   attachments?: ChatAttachment[]
+  onSelectOption?: (option: string) => void
 }
 
 export function AssistantMessage({
@@ -24,6 +28,7 @@ export function AssistantMessage({
   isThought = false,
   timestamp = "",
   attachments = [],
+  onSelectOption,
 }: AssistantMessageProps) {
   const { t } = useTranslation()
   const [isCopied, setIsCopied] = useState(false)
@@ -41,6 +46,8 @@ export function AssistantMessage({
   const imageAttachments = safeAttachments.filter(
     (a) => a.type === "image" && a.url,
   )
+
+  const blocks = parseMessageBlocks(content)
 
   return (
     <div className="group flex w-full flex-col gap-1.5">
@@ -62,49 +69,73 @@ export function AssistantMessage({
         </div>
       </div>
 
-      {content.trim().length > 0 && (
+      <div
+        className={cn(
+          "relative overflow-hidden rounded-xl border",
+          isThought
+            ? "border-amber-200/90 bg-amber-50/70 text-amber-950 dark:border-amber-500/35 dark:bg-amber-500/10 dark:text-amber-100"
+            : "bg-card text-card-foreground",
+        )}
+      >
         <div
           className={cn(
-            "relative overflow-hidden rounded-xl border",
+            "prose dark:prose-invert prose-pre:my-2 prose-pre:overflow-x-auto prose-pre:rounded-lg prose-pre:border prose-pre:bg-zinc-100 prose-pre:p-0 prose-pre:text-zinc-900 dark:prose-pre:bg-zinc-950 dark:prose-pre:text-zinc-100 prose-code:text-zinc-900 prose-code:bg-zinc-100 dark:prose-code:text-zinc-100 dark:prose-code:bg-zinc-800 max-w-none [overflow-wrap:anywhere] break-words",
             isThought
-              ? "border-amber-200/90 bg-amber-50/70 text-amber-950 dark:border-amber-500/35 dark:bg-amber-500/10 dark:text-amber-100"
-              : "bg-card text-card-foreground",
+              ? "prose-p:my-1.5 p-3 text-[13px] leading-relaxed opacity-90"
+              : "prose-p:my-2 p-4 text-[15px] leading-relaxed",
           )}
         >
-          <div
-            className={cn(
-              "prose dark:prose-invert prose-pre:my-2 prose-pre:overflow-x-auto prose-pre:rounded-lg prose-pre:border prose-pre:bg-zinc-100 prose-pre:p-0 prose-pre:text-zinc-900 dark:prose-pre:bg-zinc-950 dark:prose-pre:text-zinc-100 prose-code:text-zinc-900 prose-code:bg-zinc-100 dark:prose-code:text-zinc-100 dark:prose-code:bg-zinc-800 max-w-none [overflow-wrap:anywhere] break-words",
-              isThought
-                ? "prose-p:my-1.5 p-3 text-[13px] leading-relaxed opacity-90"
-                : "prose-p:my-2 p-4 text-[15px] leading-relaxed",
-            )}
-          >
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              rehypePlugins={[rehypeRaw, rehypeSanitize, rehypeHighlight]}
-            >
-              {content}
-            </ReactMarkdown>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn(
-              "absolute top-2 right-2 h-7 w-7 opacity-0 transition-opacity group-hover:opacity-100",
-              isThought
-                ? "bg-amber-100/70 hover:bg-amber-200/80 dark:bg-amber-500/20 dark:hover:bg-amber-400/30"
-                : "bg-background/50 hover:bg-background/80",
-            )}
-            onClick={handleCopy}
-          >
-            {isCopied ? (
-              <IconCheck className="h-4 w-4 text-green-500" />
-            ) : (
-              <IconCopy className="text-muted-foreground h-4 w-4" />
-            )}
-          </Button>
+          {blocks.map((block, idx) => {
+            if (block.type === "text" && block.content.trim()) {
+              return (
+                <ReactMarkdown
+                  key={idx}
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[rehypeRaw, rehypeSanitize, rehypeHighlight]}
+                >
+                  {block.content}
+                </ReactMarkdown>
+              )
+            }
+            if (block.type === "selection") {
+              return (
+                <SelectionBlock
+                  key={idx}
+                  options={block.options}
+                  onSelect={onSelectOption}
+                />
+              )
+            }
+            if (block.type === "dataquality") {
+              return (
+                <DataQualityBlock
+                  key={idx}
+                  summary={block.summary}
+                  items={block.items}
+                />
+              )
+            }
+            return null
+          })}
         </div>
-      )}
+        <Button
+          variant="ghost"
+          size="icon"
+          className={cn(
+            "absolute top-2 right-2 h-7 w-7 opacity-0 transition-opacity group-hover:opacity-100",
+            isThought
+              ? "bg-amber-100/70 hover:bg-amber-200/80 dark:bg-amber-500/20 dark:hover:bg-amber-400/30"
+              : "bg-background/50 hover:bg-background/80",
+          )}
+          onClick={handleCopy}
+        >
+          {isCopied ? (
+            <IconCheck className="h-4 w-4 text-green-500" />
+          ) : (
+            <IconCopy className="text-muted-foreground h-4 w-4" />
+          )}
+        </Button>
+      </div>
 
       {imageAttachments.length > 0 && (
         <div className="flex flex-wrap gap-2 px-1">

@@ -312,6 +312,7 @@ export function ChatPage() {
                   content={msg.content}
                   isThought={msg.kind === "thought"}
                   timestamp={msg.timestamp}
+                  onSelectOption={(option) => sendMessage({ content: option })}
                 />
               ) : (
                 <UserMessage

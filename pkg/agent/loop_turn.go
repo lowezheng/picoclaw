@@ -414,6 +414,7 @@ turnLoop:
 		var response *providers.LLMResponse
 		var err error
 		maxRetries := 2
+		llmStart := time.Now()
 		for retry := 0; retry <= maxRetries; retry++ {
 			response, err = callLLM(callMessages, providerToolDefs)
 			if err == nil {
@@ -602,6 +603,34 @@ turnLoop:
 				turnStatus = TurnEndStatusAborted
 				return al.abortTurn(ts)
 			}
+		}
+
+		llmDuration := time.Since(llmStart)
+
+		// Send LLM completion timing to chat channel
+		if al.cfg.Agents.Defaults.IsToolFeedbackEnabled() &&
+			ts.channel != "" &&
+			!ts.opts.SuppressToolFeedback {
+			llmTimingMsg := fmt.Sprintf("🤖 LLM 推理 in %s", llmDuration.Round(time.Millisecond))
+			tmCtx, tmCancel := context.WithTimeout(turnCtx, 3*time.Second)
+			agentID, sessionKey, scope := outboundTurnMetadata(ts.agent.ID, ts.sessionKey, ts.opts.Dispatch.SessionScope)
+			outboundCtx := outboundContextFromInbound(
+				ts.opts.Dispatch.InboundContext,
+				ts.channel,
+				ts.chatID,
+				ts.opts.Dispatch.ReplyToMessageID(),
+			)
+			outboundCtx.Raw["message_kind"] = messageKindLLMTiming
+			_ = al.bus.PublishOutbound(tmCtx, bus.OutboundMessage{
+				Channel:    ts.channel,
+				ChatID:     ts.chatID,
+				Context:    outboundCtx,
+				AgentID:    agentID,
+				SessionKey: sessionKey,
+				Scope:      scope,
+				Content:    llmTimingMsg,
+			})
+			tmCancel()
 		}
 
 		// Save finishReason to turnState for SubTurn truncation detection
@@ -1398,9 +1427,9 @@ turnLoop:
 				}
 				var timingMsg string
 				if toolResult.Async {
-					timingMsg = fmt.Sprintf("%s `%s` async scheduled (duration: -1)", statusEmoji, toolName)
+					timingMsg = fmt.Sprintf("%s `%s` 工具异步调用 (duration: -1)", statusEmoji, toolName)
 				} else {
-					timingMsg = fmt.Sprintf("%s `%s` completed in %s", statusEmoji, toolName, toolDuration.Round(time.Millisecond))
+					timingMsg = fmt.Sprintf("%s `%s` 工具调用 in %s", statusEmoji, toolName, toolDuration.Round(time.Millisecond))
 				}
 				tmCtx, tmCancel := context.WithTimeout(turnCtx, 3*time.Second)
 				agentID, sessionKey, scope := outboundTurnMetadata(ts.agent.ID, ts.sessionKey, ts.opts.Dispatch.SessionScope)
@@ -1410,7 +1439,7 @@ turnLoop:
 					ts.chatID,
 					ts.opts.Dispatch.ReplyToMessageID(),
 				)
-				outboundCtx.Raw["message_kind"] = "tool_timing"
+				outboundCtx.Raw["message_kind"] = messageKindToolTiming
 				_ = al.bus.PublishOutbound(tmCtx, bus.OutboundMessage{
 					Channel:    ts.channel,
 					ChatID:     ts.chatID,
