@@ -22,8 +22,6 @@ export function detectToolCall(
   const toolMatch = trimmed.match(/^🔧\s*`([^`]+)`/)
   if (toolMatch) {
     const toolName = toolMatch[1]
-    // send_file is a media-delivery marker, not a real tool call
-    if (toolName === "send_file") return null
     let rest = trimmed.slice(toolMatch[0].length).trim()
     // Strip markdown code-block fences (with optional language tag)
     rest = rest.replace(/^```[a-zA-Z0-9]*\n?/, "").replace(/\n?```$/, "").trim()
