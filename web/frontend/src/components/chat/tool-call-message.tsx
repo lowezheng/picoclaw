@@ -6,11 +6,18 @@ import { Button } from "@/components/ui/button"
 import { formatMessageTime } from "@/hooks/use-pico-chat"
 import { cn } from "@/lib/utils"
 
+interface ChatAttachment {
+  type: "image"
+  url: string
+  filename?: string
+}
+
 interface ToolCallMessageProps {
   toolName: string
   args?: string
   output?: string
   timestamp?: string | number
+  attachments?: ChatAttachment[]
 }
 
 export function ToolCallMessage({
@@ -18,6 +25,7 @@ export function ToolCallMessage({
   args,
   output,
   timestamp = "",
+  attachments = [],
 }: ToolCallMessageProps) {
   const { t } = useTranslation()
   const [isExpanded, setIsExpanded] = useState(false)
@@ -104,6 +112,19 @@ export function ToolCallMessage({
           )}
         </Button>
       </div>
+
+      {attachments.length > 0 && (
+        <div className="flex flex-wrap gap-2 px-1">
+          {attachments.map((attachment, index) => (
+            <img
+              key={`${attachment.url}-${index}`}
+              src={attachment.url}
+              alt="Generated image"
+              className="max-h-72 max-w-full rounded-lg object-cover shadow-sm"
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
 }

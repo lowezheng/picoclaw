@@ -118,6 +118,20 @@ export function AssistantMessage({
             return null
           })}
         </div>
+
+        {imageAttachments.length > 0 && (
+          <div className="flex flex-wrap gap-2 px-4 pb-4">
+            {imageAttachments.map((attachment, index) => (
+              <img
+                key={`${attachment.url}-${index}`}
+                src={attachment.url}
+                alt="Generated image"
+                className="max-h-72 max-w-full rounded-lg object-cover shadow-sm"
+              />
+            ))}
+          </div>
+        )}
+
         <Button
           variant="ghost"
           size="icon"
@@ -136,19 +150,6 @@ export function AssistantMessage({
           )}
         </Button>
       </div>
-
-      {imageAttachments.length > 0 && (
-        <div className="flex flex-wrap gap-2 px-1">
-          {imageAttachments.map((attachment, index) => (
-            <img
-              key={`${attachment.url}-${index}`}
-              src={attachment.url}
-              alt="Generated image"
-              className="max-h-72 max-w-full rounded-lg object-cover shadow-sm"
-            />
-          ))}
-        </div>
-      )}
     </div>
   )
 }

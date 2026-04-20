@@ -299,6 +299,7 @@ export function OpenResponsesChatPage() {
                       args={toolCall.args}
                       output={toolCall.output}
                       timestamp={msg.timestamp}
+                      attachments={msg.attachments}
                     />
                   ) : (
                     <AssistantMessage
