@@ -251,6 +251,7 @@ type ToolFeedbackConfig struct {
 	MaxArgsLength int  `json:"max_args_length" env:"PICOCLAW_AGENTS_DEFAULTS_TOOL_FEEDBACK_MAX_ARGS_LENGTH"`
 }
 
+// ConfidenceScoreConfig configures the LLM-based confidence scoring feature.
 type ConfidenceScoreConfig struct {
 	Enabled     bool     `json:"enabled"`
 	Channel     []string `json:"channel,omitempty"`
@@ -331,6 +332,7 @@ func (d *AgentDefaults) IsConfidenceScoreEnabled(channel string) bool {
 	return false
 }
 
+// GetConfidenceScoreMaxTokens returns the max tokens for confidence evaluation, or 512 if unset.
 func (d *AgentDefaults) GetConfidenceScoreMaxTokens() int {
 	if d.ConfidenceScore.MaxTokens > 0 {
 		return d.ConfidenceScore.MaxTokens
@@ -338,6 +340,7 @@ func (d *AgentDefaults) GetConfidenceScoreMaxTokens() int {
 	return 512
 }
 
+// GetConfidenceScoreTemperature returns the temperature for confidence evaluation, or 0.1 if unset.
 func (d *AgentDefaults) GetConfidenceScoreTemperature() float64 {
 	if d.ConfidenceScore.Temperature > 0 {
 		return d.ConfidenceScore.Temperature
@@ -345,6 +348,7 @@ func (d *AgentDefaults) GetConfidenceScoreTemperature() float64 {
 	return 0.1
 }
 
+// GetConfidenceScoreTimeout returns the timeout for confidence evaluation, or 60s if unset or invalid.
 func (d *AgentDefaults) GetConfidenceScoreTimeout() time.Duration {
 	if d.ConfidenceScore.Timeout != "" {
 		if dur, err := time.ParseDuration(d.ConfidenceScore.Timeout); err == nil {
