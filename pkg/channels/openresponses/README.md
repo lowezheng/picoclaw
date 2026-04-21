@@ -115,7 +115,7 @@ Content can be a string or an array of content parts for multimodal input:
 {
   "stream": true,
   "conversation_id": "{uuid}",
-  "content": [
+  "input": [
     { "type": "input_text", "content": "Describe this image" },
     { "type": "input_image", "content": "data:xxxx/pdf;base64,xxxx" }
   ]
@@ -125,18 +125,6 @@ Content can be a string or an array of content parts for multimodal input:
 ### Output Items
 
 All items share these required fields: `id`, `type`, `status`.
-
-#### `message`
-
-```json
-{
-  "type": "message",
-  "id": "msg_xxx",
-  "role": "assistant",
-  "status": "completed",
-  "content": [ /* ContentPart[] */ ]
-}
-```
 
 #### `function_call`
 

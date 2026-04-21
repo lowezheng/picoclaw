@@ -779,8 +779,8 @@ func TestServeHTTPJSONResponseWithImage(t *testing.T) {
 	if resp.Output[1].Type != "message" || resp.Output[1].Content[0].Type != "output_image" {
 		t.Errorf("expected second item image message, got %+v", resp.Output[1])
 	}
-	if !strings.HasPrefix(resp.Output[1].Content[0].ImageURL, "data:image/png;base64,") {
-		t.Errorf("expected image data URL, got %s", resp.Output[1].Content[0].ImageURL)
+	if !strings.HasPrefix(resp.Output[1].Content[0].Content, "data:image/png;base64,") {
+		t.Errorf("expected image data URL, got %s", resp.Output[1].Content[0].Content)
 	}
 }
 

@@ -16,13 +16,12 @@ interface OpenResponsesSetupResponse {
 }
 
 interface ContentPart {
-  type: "input_text" | "input_image"
+  type: "input_text" | "input_image" | "input_file"
   content: string
 }
 
 interface OpenResponsesChatRequest {
-  input?: string
-  content?: ContentPart[]
+  input?: string | ContentPart[]
   conversation_id?: string
   stream?: boolean
 }
@@ -230,17 +229,17 @@ export async function sendOpenResponsesMessage(
         try {
           const parsedJSON = JSON.parse(parsedBlock.data) as {
             output_index?: number
-            part?: { type?: string; image_url?: string }
+            part?: { type?: string; content?: string }
           }
           if (
             typeof parsedJSON.output_index === "number" &&
             parsedJSON.part?.type === "output_image" &&
-            parsedJSON.part.image_url
+            parsedJSON.part.content
           ) {
             onStreamEvent?.({
               type: "image",
               outputIndex: parsedJSON.output_index,
-              delta: parsedJSON.part.image_url,
+              delta: parsedJSON.part.content,
             })
           }
         } catch (err) {

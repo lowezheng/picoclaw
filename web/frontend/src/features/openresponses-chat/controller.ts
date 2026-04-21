@@ -71,21 +71,14 @@ export async function sendOpenResponsesChatMessage({
   try {
     // Only send the current user input; the backend manages conversation
     // history via conversation_id.
-    const hasAttachments = normalizedAttachments.length > 0
-
-    let requestBody: { input?: string; content?: ContentPart[]; conversation_id: string; stream: boolean }
-    if (hasAttachments) {
-      const contentParts: ContentPart[] = []
-      if (normalizedContent) {
-        contentParts.push({ type: "input_text", content: normalizedContent })
-      }
-      for (const a of normalizedAttachments) {
-        contentParts.push({ type: "input_image", content: a.url })
-      }
-      requestBody = { content: contentParts, conversation_id: sessionId, stream: true }
-    } else {
-      requestBody = { input: normalizedContent, conversation_id: sessionId, stream: true }
+    const contentParts: ContentPart[] = []
+    if (normalizedContent) {
+      contentParts.push({ type: "input_text", content: normalizedContent })
     }
+    for (const a of normalizedAttachments) {
+      contentParts.push({ type: a.type === "image" ? "input_image" : "input_file", content: a.url })
+    }
+    const requestBody = { input: contentParts, conversation_id: sessionId, stream: true }
 
     const assistantMessages = new Map<
       number,

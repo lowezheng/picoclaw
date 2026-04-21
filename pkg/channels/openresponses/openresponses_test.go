@@ -204,29 +204,50 @@ func TestPendingTimeout(t *testing.T) {
 	}
 }
 
-func TestNormalizeInput(t *testing.T) {
-	if got := normalizeInput("hello"); got != "hello" {
-		t.Errorf("normalizeInput(string): got %q, want hello", got)
-	}
-	if got := normalizeInput(nil); got != "" {
-		t.Errorf("normalizeInput(nil): got %q, want empty", got)
-	}
-
-	items := []InputItem{
-		{Type: "message", Role: "user", Content: "hello"},
-		{Type: "message", Role: "user", Content: "world"},
-	}
-	if got := normalizeInput(items); got != "hello\nworld" {
-		t.Errorf("normalizeInput(items): got %q, want 'hello\\nworld'", got)
+func TestExtractRequestContent(t *testing.T) {
+	// string input
+	req := &CreateResponseRequest{Input: "hello"}
+	text, media := extractRequestContent(req)
+	if text != "hello" || len(media) != 0 {
+		t.Errorf("string input: got text=%q media=%v, want hello []", text, media)
 	}
 
-	// Simulate what json.Unmarshal produces for a JSON array into an `any` field.
-	jsonAny := []any{
-		map[string]any{"type": "message", "role": "user", "content": "from json"},
-		map[string]any{"type": "message", "role": "assistant", "content": "ignored"},
+	// nil input
+	req = &CreateResponseRequest{Input: nil}
+	text, media = extractRequestContent(req)
+	if text != "" || len(media) != 0 {
+		t.Errorf("nil input: got text=%q media=%v, want empty []", text, media)
 	}
-	if got := normalizeInput(jsonAny); got != "from json" {
-		t.Errorf("normalizeInput([]any): got %q, want 'from json'", got)
+
+	// []ContentPart typed
+	req = &CreateResponseRequest{Input: []ContentPart{
+		{Type: "input_text", Content: "hello"},
+		{Type: "input_text", Content: "world"},
+	}}
+	text, media = extractRequestContent(req)
+	if text != "hello\nworld" || len(media) != 0 {
+		t.Errorf("typed []ContentPart: got text=%q media=%v, want 'hello\\nworld' []", text, media)
+	}
+
+	// []any (JSON unmarshaled)
+	req = &CreateResponseRequest{Input: []any{
+		map[string]any{"type": "input_text", "content": "from json"},
+		map[string]any{"type": "input_image", "content": "data:image/png;base64,abc"},
+	}}
+	text, media = extractRequestContent(req)
+	if text != "from json" || len(media) != 1 {
+		t.Errorf("[]any: got text=%q media=%v, want 'from json' [1]", text, media)
+	}
+
+	// mixed text + image + file
+	req = &CreateResponseRequest{Input: []ContentPart{
+		{Type: "input_text", Content: "Describe"},
+		{Type: "input_image", Content: "data:image/png;base64,img"},
+		{Type: "input_file", Content: "data:application/pdf;base64,pdf"},
+	}}
+	text, media = extractRequestContent(req)
+	if text != "Describe" || len(media) != 2 {
+		t.Errorf("mixed: got text=%q media=%v, want 'Describe' [2]", text, media)
 	}
 }
 

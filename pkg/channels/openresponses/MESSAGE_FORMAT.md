@@ -1,4 +1,4 @@
-# OpenResponses 请求与响应报文格式
+# OpenResponses-变种 请求与响应报文格式
 
 
 ## curl Test Examples
@@ -10,8 +10,7 @@ curl -X POST http://localhost:18790/v1/responses \
   -H "Authorization: Bearer 570694ff7910121aaf9feea5f42e6263" \
   -H "Content-Type: application/json" \
   -d '{
-    "input": "Hello, how are you?",
-    "stream": true
+    "input": "Hello, how are you?"
   }'
 ```
 
@@ -24,16 +23,15 @@ curl -X POST http://localhost:18790/v1/responses \
   -H "Content-Type: application/json" \
   -d '{
     "input": "What is the weather like?",
-    "conversation_id": "conv_123",
-    "stream":true
+    "conversation_id": "conv_125"
   }'
 ```
 
 ### 3. SSE streaming request
 
 ```bash
-curl -N -v -X POST http://10.8.34.191:28790/v1/responses \
-  -H "Authorization: Bearer 3db05261ae20c45825aedcb832a67aef" \
+curl -N -v -X POST http://localhost:18790/v1/responses \
+  -H "Authorization: Bearer 570694ff7910121aaf9feea5f42e6263" \
   -H "Content-Type: application/json" \
   -d '{
     "input": "今天天气",
@@ -43,13 +41,14 @@ curl -N -v -X POST http://10.8.34.191:28790/v1/responses \
 
 ```bash
 curl -X POST http://localhost:18790/v1/responses \
-  -H "Authorization: Bearer 24cdcc7e2ed4ab5f67ed12301685a412" \
+  -H "Authorization: Bearer 570694ff7910121aaf9feea5f42e6263" \
   -H "Content-Type: application/json" \
   -d '{
     "input": [
       {"type": "input_text", "content": "Explain quantum computing"}
     ],
-    "conversation_id": "conv_456"
+    "conversation_id": "conv_456",
+    "stream": true
   }'
 ```
 
@@ -66,7 +65,7 @@ curl -X POST http://localhost:18790/v1/responses \
 
 ```bash
 curl -X POST http://localhost:18790/v1/responses \
-  -H "Authorization: Bearer 24cdcc7e2ed4ab5f67ed12301685a412" \
+  -H "Authorization: Bearer 570694ff7910121aaf9feea5f42e6263" \
   -H "Content-Type: application/json" \
   -d '{"input": "   "}'
 ```
@@ -78,7 +77,7 @@ curl -X POST http://localhost:18790/v1/responses \
 ### 1. List sessions
 
 ```bash
-curl -X GET "http://localhost:18790/v1/responses/sessions?offset=0&limit=20" \
+curl -X GET "http://localhost:18790/v1/responses/sessions?offset=1&limit=20" \
   -H "Authorization: Bearer 570694ff7910121aaf9feea5f42e6263"
 ```
 
@@ -122,11 +121,14 @@ Content-Type: application/json
 ```
 
 ### 1.2 带上下文的多轮对话
-
+1-n个
 ```json
 {
-  "input": "What is the weather like?",
-  "conversation_id": "conv_123",
+  "input": [
+    { "type": "input_text", "content": "Describe this image" },
+    { "type": "input_text", "content": "Describe this image" }
+  ],
+  "conversation_id": "{uuid}",
   "stream": true
 }
 ```
@@ -135,7 +137,7 @@ Content-Type: application/json
 
 ```json
 {
-  "content": [
+  "input": [
     { "type": "input_text", "content": "Describe this image" },
     { "type": "input_image", "content": "data:image/png;base64,XXXXXX" }
   ],
@@ -148,7 +150,7 @@ Content-Type: application/json
 
 ```json
 {
-  "content": [
+  "input": [
     { "type": "input_text", "content": "Analyze this document" },
     { "type": "input_file", "content": "data:application/pdf;base64,XXXXXX" }
   ],
@@ -165,7 +167,6 @@ Content-Type: application/json
 | `conversation_id` | `string` | 否 | 会话 ID，用于多轮对话连续性 |
 | `model` | `string` | 否 | 模型标识 |
 | `instructions` | `string` | 否 | 系统/开发者指令 |
-| `tools` | `array` | 否 | 工具定义列表 |
 | `max_output_tokens` | `integer` | 否 | 最大生成 token 数 |
 | `temperature` | `number` | 否 | 采样温度 (0-2) |
 

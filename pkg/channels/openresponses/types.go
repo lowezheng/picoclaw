@@ -1,7 +1,6 @@
 package openresponses
 
 import (
-	"strings"
 	"sync"
 	"time"
 
@@ -89,8 +88,8 @@ type ResponseItem struct {
 type Content struct {
 	Type      string `json:"type"` // "output_text" | "output_image" | "reasoning_text" | "function_call_arguments"
 	Text      string `json:"text,omitempty"`
-	ImageURL  string `json:"image_url,omitempty"`  // NEW
-	Arguments string `json:"arguments,omitempty"`  // NEW: for function_call_arguments
+	Content   string `json:"content,omitempty"`    // for output_image base64 data URL
+	Arguments string `json:"arguments,omitempty"`  // for function_call_arguments
 }
 
 // --- SSE Event Types ---
@@ -112,60 +111,6 @@ type ResponseEvent struct {
 
 func nowUnix() int64 {
 	return time.Now().Unix()
-}
-
-// normalizeInput extracts a plain-text string from the OpenResponses "input" field.
-// It accepts either a single string or an array of InputItem and concatenates user messages.
-func normalizeInput(input any) string {
-	if input == nil {
-		return ""
-	}
-	if s, ok := input.(string); ok {
-		return s
-	}
-
-	// Helper to extract user text from an InputItem.
-	extract := func(it InputItem) string {
-		if it.Type != "message" || it.Role != "user" {
-			return ""
-		}
-		if text, ok := it.Content.(string); ok {
-			return text
-		}
-		return ""
-	}
-
-	var parts []string
-
-	switch v := input.(type) {
-	case []InputItem:
-		for _, it := range v {
-			if text := extract(it); text != "" {
-				parts = append(parts, text)
-			}
-		}
-	case []any:
-		for _, elem := range v {
-			var it InputItem
-			switch m := elem.(type) {
-			case map[string]any:
-				if t, ok := m["type"].(string); ok {
-					it.Type = t
-				}
-				if r, ok := m["role"].(string); ok {
-					it.Role = r
-				}
-				it.Content = m["content"]
-			case InputItem:
-				it = m
-			}
-			if text := extract(it); text != "" {
-				parts = append(parts, text)
-			}
-		}
-	}
-
-	return strings.Join(parts, "\n")
 }
 
 // --- Streaming Types (Path A) ---

@@ -272,7 +272,7 @@ func (c *OpenResponsesChannel) writeJSONResponseWithStream(
 				Status: "completed",
 				Role:   "assistant",
 				Content: []Content{
-					{Type: "output_image", ImageURL: ev.imageURL},
+					{Type: "output_image", Content: ev.imageURL},
 				},
 			})
 		case eventKindFunctionCall:
@@ -730,7 +730,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 				ItemID:         itemID,
 				OutputIndex:    len(outputItems),
 				ContentIndex:   0,
-				Part:           Content{Type: "output_image", ImageURL: ""},
+				Part:           Content{Type: "output_image", Content: ""},
 			})
 			seq++
 			flushAndExtend()
@@ -741,7 +741,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 				ItemID:         itemID,
 				OutputIndex:    len(outputItems),
 				ContentIndex:   0,
-				Part:           Content{Type: "output_image", ImageURL: ev.imageURL},
+				Part:           Content{Type: "output_image", Content: ev.imageURL},
 			})
 			seq++
 			flushAndExtend()
@@ -751,13 +751,13 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 				ID:      itemID,
 				Status:  "completed",
 				Role:    "assistant",
-				Content: []Content{{Type: "output_image", ImageURL: ev.imageURL}},
+				Content: []Content{{Type: "output_image", Content: ev.imageURL}},
 			}
 			writeSSEEvent(w, "response.output_item.done", ResponseEvent{
 				Type:           "response.output_item.done",
 				SequenceNumber: seq,
 				OutputIndex:    len(outputItems),
-				Item:           stripImageURLsFromItem(doneItem),
+				Item:           stripContentsFromItem(doneItem),
 			})
 			seq++
 			flushAndExtend()
@@ -863,7 +863,7 @@ func (c *OpenResponsesChannel) writeSSEResponseStream(
 	resp.Status = "completed"
 	resp.Usage = Usage{InputTokens: 0, OutputTokens: 0}
 	if len(outputItems) > 0 {
-		resp.Output = stripImageURLs(outputItems)
+		resp.Output = stripContents(outputItems)
 	}
 	writeSSEEvent(w, "response.completed", ResponseEvent{
 		Type:           "response.completed",
@@ -911,29 +911,58 @@ func writeSSEEvent(w http.ResponseWriter, eventType string, data any) {
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, string(jsonBytes))
 }
 
-// extractRequestContent extracts text and media from the request.
-// It prefers req.Content array, falling back to req.Input for backward compatibility.
+// extractRequestContent extracts text and media from the request input field.
+// Supported formats:
+//   - string
+//   - []ContentPart (input_text, input_image, input_file)
 func extractRequestContent(req *CreateResponseRequest) (string, []string) {
-	if len(req.Content) > 0 {
-		var textParts []string
-		var media []string
-		for _, part := range req.Content {
-			switch part.Type {
-			case "input_text":
-				if strings.TrimSpace(part.Content) != "" {
-					textParts = append(textParts, part.Content)
-				}
-			case "input_image", "input_file":
-				if strings.TrimSpace(part.Content) != "" {
-					media = append(media, part.Content)
-				}
-			}
-		}
-		return strings.Join(textParts, "\n"), media
+	if req.Input == nil {
+		return "", nil
 	}
 
-	// Fallback to legacy Input field
-	return normalizeInput(req.Input), nil
+	// Simple string input.
+	if s, ok := req.Input.(string); ok {
+		return strings.TrimSpace(s), nil
+	}
+
+	// Parse []ContentPart from typed slice or JSON-unmarshaled []any.
+	var parts []ContentPart
+	switch v := req.Input.(type) {
+	case []ContentPart:
+		parts = v
+	case []any:
+		for _, elem := range v {
+			switch m := elem.(type) {
+			case map[string]any:
+				part := ContentPart{}
+				if t, ok := m["type"].(string); ok {
+					part.Type = t
+				}
+				if c, ok := m["content"].(string); ok {
+					part.Content = c
+				}
+				parts = append(parts, part)
+			case ContentPart:
+				parts = append(parts, m)
+			}
+		}
+	}
+
+	var textParts []string
+	var media []string
+	for _, part := range parts {
+		switch part.Type {
+		case "input_text":
+			if strings.TrimSpace(part.Content) != "" {
+				textParts = append(textParts, part.Content)
+			}
+		case "input_image", "input_file":
+			if strings.TrimSpace(part.Content) != "" {
+				media = append(media, part.Content)
+			}
+		}
+	}
+	return strings.Join(textParts, "\n"), media
 }
 
 func writeError(w http.ResponseWriter, statusCode int, code, message string) {
@@ -960,18 +989,18 @@ func writeError(w http.ResponseWriter, statusCode int, code, message string) {
 	})
 }
 
-// stripImageURLs removes ImageURL from output_image content parts to save
+// stripContents removes Content from output_image content parts to save
 // bandwidth in SSE events where the full data URL was already sent via
 // response.content_part.done.
-func stripImageURLs(items []ResponseItem) []ResponseItem {
+func stripContents(items []ResponseItem) []ResponseItem {
 	stripped := make([]ResponseItem, len(items))
 	for i, item := range items {
-		stripped[i] = stripImageURLsFromItem(item)
+		stripped[i] = stripContentsFromItem(item)
 	}
 	return stripped
 }
 
-func stripImageURLsFromItem(item ResponseItem) ResponseItem {
+func stripContentsFromItem(item ResponseItem) ResponseItem {
 	if len(item.Content) == 0 {
 		return item
 	}
@@ -979,7 +1008,7 @@ func stripImageURLsFromItem(item ResponseItem) ResponseItem {
 	for j, c := range item.Content {
 		newContent[j] = c
 		if c.Type == "output_image" {
-			newContent[j].ImageURL = ""
+			newContent[j].Content = ""
 		}
 	}
 	item.Content = newContent
