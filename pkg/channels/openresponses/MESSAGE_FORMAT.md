@@ -203,31 +203,84 @@ data: {json_payload}
 
 ### 2.2 通用字段
 
-所有事件共享字段：
+#### ① 所有事件共享字段
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `type` | `string` | 事件类型名 |
 | `sequence_number` | `int` | 单调递增序列号 |
+| `response` | `object` | Response 对象，仅在 `response.in_progress` / `response.completed` / `response.failed` 时有实际值，其余事件为默认值（空字符串 / 0 / null） |
+| `item` | `object` | Item 对象，仅在 `response.output_item.done` 时有实际值，其余事件为默认值（`type:"", id:"", status:""`） |
+| `part` | `object` | Part 对象，仅在 `response.content_part.done` 时有实际值，其余事件为默认值（`type:""`） |
 
-Item 相关事件附加：
+#### ② Response 对象字段
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | `string` | Response 唯一标识（如 `resp_xxx`） |
+| `object` | `string` | 固定为 `"response"` |
+| `created_at` | `int` | Unix 时间戳（秒），表示响应创建时间 |
+| `status` | `string` | 响应状态：`in_progress` / `completed` / `failed` / `incomplete` |
+| `output` | `array` | 完整 output items 数组，仅在 `completed` 时包含值，否则为 `null` |
+| `usage` | `object` | Token 用量统计，见下表 |
+| `conversation_id` | `string` | 会话 ID，用于多轮对话连续性 |
+
+`usage` 对象：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `input_tokens` | `int` | 输入 token 数量 |
+| `output_tokens` | `int` | 输出 token 数量 |
+
+#### ③ Item 相关事件附加字段
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `item_id` | `string` | 目标 item ID |
 | `output_index` | `int` | 在 output 数组中的位置 |
 
-Content 相关事件附加：
+Item 对象中的字段（出现在 `output_item.added` / `output_item.done` 的 `item` 中）：
+
+| 字段 | 类型 | 说明 | 适用类型 |
+|------|------|------|---------|
+| `type` | `string` | item 类型：`message` / `reasoning` / `function_call` | 所有 |
+| `id` | `string` | item 唯一标识 | 所有 |
+| `status` | `string` | item 状态：`in_progress` / `completed` / `incomplete` / `failed` | 所有 |
+| `role` | `string` | 角色，仅 `message` 类型为 `assistant` | message |
+| `content` | `array` | 内容片段数组，仅在 `status` 为 `completed` 时有值 | message / reasoning |
+| `name` | `string` | 函数名 | function_call |
+| `call_id` | `string` | 函数调用唯一标识 | function_call |
+| `arguments` | `string` | 函数参数 JSON 字符串，仅在 `status` 为 `completed` 时有值 | function_call |
+
+#### ④ Content 相关事件附加字段
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `content_index` | `int` | 在 item content 数组中的位置 |
 
-Delta 事件附加：
+#### ⑤ Part 对象字段
+
+Part 对象出现在 `content_part.added` / `content_part.done` 等事件的 `part` 字段中：
+
+| 字段 | 类型 | 说明 | 适用类型 |
+|------|------|------|---------|
+| `type` | `string` | part 类型：`output_text` / `reasoning_text` / `function_call_arguments` | 所有 |
+| `text` | `string` | 完整文本内容，仅在 `content_part.done` 时有值 | output_text / reasoning_text |
+| `arguments` | `string` | 函数参数 JSON 字符串，仅在 `content_part.done` 时有值 | function_call_arguments |
+
+#### ⑥ Delta 事件附加字段
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `delta` | `string` | 增量内容片段 |
+| `delta` | `string` | 增量内容片段（文本或 JSON 片段） |
+
+#### ⑦ Error 对象字段（仅 `response.failed`）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `message` | `string` | 错误描述信息 |
+| `type` | `string` | 错误类型，如 `model_error` |
+| `code` | `string` | 错误码，如 `model_not_found` |
 
 ### 2.3 各事件详细示例
 

@@ -7,7 +7,7 @@ import { formatMessageTime } from "@/hooks/use-pico-chat"
 import { cn } from "@/lib/utils"
 
 interface ChatAttachment {
-  type: "image"
+  type: "image" | "file"
   url: string
   filename?: string
 }
