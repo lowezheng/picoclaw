@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -40,28 +41,37 @@ const DefaultRequestTimeout = 120 * time.Second
 
 // NewHTTPClient creates an *http.Client with an optional proxy and the default timeout.
 func NewHTTPClient(proxy string) *http.Client {
-	client := &http.Client{
-		Timeout: DefaultRequestTimeout,
+	var tr *http.Transport
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		tr = base.Clone()
+	} else {
+		tr = &http.Transport{}
+	}
+	tr.TLSHandshakeTimeout = 10 * time.Second
+	tr.ResponseHeaderTimeout = 60 * time.Second
+	tr.ExpectContinueTimeout = 1 * time.Second
+	tr.IdleConnTimeout = 90 * time.Second
+	tr.MaxIdleConns = 100
+	tr.MaxIdleConnsPerHost = 10
+	tr.ForceAttemptHTTP2 = true
+	if tr.DialContext == nil {
+		tr.DialContext = (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext
 	}
 	if proxy != "" {
 		parsed, err := url.Parse(proxy)
 		if err == nil {
-			// Preserve http.DefaultTransport settings (TLS, HTTP/2, timeouts, etc.)
-			if base, ok := http.DefaultTransport.(*http.Transport); ok {
-				tr := base.Clone()
-				tr.Proxy = http.ProxyURL(parsed)
-				client.Transport = tr
-			} else {
-				// Fallback: minimal transport if DefaultTransport is not *http.Transport.
-				client.Transport = &http.Transport{
-					Proxy: http.ProxyURL(parsed),
-				}
-			}
+			tr.Proxy = http.ProxyURL(parsed)
 		} else {
 			log.Printf("common: invalid proxy URL %q: %v", proxy, err)
 		}
 	}
-	return client
+	return &http.Client{
+		Transport: tr,
+		Timeout:   DefaultRequestTimeout,
+	}
 }
 
 // --- Message serialization ---

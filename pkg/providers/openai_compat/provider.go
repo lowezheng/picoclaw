@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"maps"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -281,7 +282,16 @@ func (p *Provider) ChatStream(
 	// Use a client without Timeout for streaming — the http.Client.Timeout covers
 	// the entire request lifecycle including body reads, which would kill long streams.
 	// Context cancellation still provides the safety net.
-	streamClient := &http.Client{Transport: p.httpClient.Transport}
+	// Inject TCP keepalive to prevent NAT/firewall from dropping idle connections
+	// during long LLM thinking phases.
+	streamTr := p.httpClient.Transport.(*http.Transport).Clone()
+	if streamTr.DialContext == nil {
+		streamTr.DialContext = (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 15 * time.Second,
+		}).DialContext
+	}
+	streamClient := &http.Client{Transport: streamTr}
 	resp, err := streamClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
