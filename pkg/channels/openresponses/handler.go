@@ -20,24 +20,55 @@ import (
 
 // WebhookPath implements channels.WebhookHandler.
 func (c *OpenResponsesChannel) WebhookPath() string {
-	return c.endpointPath()
+	base := c.endpointPath()
+	if !strings.HasSuffix(base, "/") {
+		return base + "/"
+	}
+	return base
 }
 
 // ServeHTTP implements http.Handler.
 func (c *OpenResponsesChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-
 	if !c.IsRunning() {
 		http.Error(w, `{"error":"channel not running"}`, http.StatusServiceUnavailable)
 		return
 	}
 
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Only POST is supported")
+	if !c.authenticate(r) {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "Invalid or missing authorization token")
 		return
 	}
 
-	if !c.authenticate(r) {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "Invalid or missing authorization token")
+	path := r.URL.Path
+	base := strings.TrimSuffix(c.endpointPath(), "/")
+	sessionsBase := base + "/sessions"
+
+	switch {
+	case path == base || path == base+"/":
+		c.serveCreateResponse(w, r)
+	case path == sessionsBase || path == sessionsBase+"/":
+		c.handleListSessions(w, r)
+	case strings.HasPrefix(path, sessionsBase+"/"):
+		c.handleSessionDetail(w, r)
+	default:
+		writeError(w, http.StatusNotFound, "not_found", "endpoint not found")
+	}
+}
+
+func (c *OpenResponsesChannel) handleSessionDetail(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		c.handleGetSession(w, r)
+	case http.MethodDelete:
+		c.handleDeleteSession(w, r)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Only GET or DELETE is supported")
+	}
+}
+
+func (c *OpenResponsesChannel) serveCreateResponse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Only POST is supported")
 		return
 	}
 

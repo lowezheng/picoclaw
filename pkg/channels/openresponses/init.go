@@ -19,7 +19,7 @@ func init() {
 			if !ok {
 				return nil, channels.ErrSendFailed
 			}
-			ch, err := NewOpenResponsesChannel(bc, c, b)
+			ch, err := NewOpenResponsesChannel(bc, c, cfg, b)
 			if err != nil {
 				return nil, err
 			}

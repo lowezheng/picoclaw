@@ -21,7 +21,7 @@ func TestNewOpenResponsesChannel(t *testing.T) {
 	bc.SetName("openresponses")
 	cfg := &config.OpenResponsesSettings{}
 
-	ch, err := NewOpenResponsesChannel(bc, cfg, msgBus)
+	ch, err := NewOpenResponsesChannel(bc, cfg, nil, msgBus)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestStartStop(t *testing.T) {
 	bc.SetName("openresponses")
 	cfg := &config.OpenResponsesSettings{}
 
-	ch, _ := NewOpenResponsesChannel(bc, cfg, msgBus)
+	ch, _ := NewOpenResponsesChannel(bc, cfg, nil, msgBus)
 	ctx := context.Background()
 
 	if err := ch.Start(ctx); err != nil {
@@ -63,7 +63,7 @@ func TestSendNotRunning(t *testing.T) {
 	bc.SetName("openresponses")
 	cfg := &config.OpenResponsesSettings{}
 
-	ch, _ := NewOpenResponsesChannel(bc, cfg, msgBus)
+	ch, _ := NewOpenResponsesChannel(bc, cfg, nil, msgBus)
 	_, err := ch.Send(context.Background(), bus.OutboundMessage{
 		Channel: "openresponses",
 		ChatID:  "conv_123",
@@ -80,7 +80,7 @@ func TestSendNoRequestID(t *testing.T) {
 	bc.SetName("openresponses")
 	cfg := &config.OpenResponsesSettings{}
 
-	ch, _ := NewOpenResponsesChannel(bc, cfg, msgBus)
+	ch, _ := NewOpenResponsesChannel(bc, cfg, nil, msgBus)
 	_ = ch.Start(context.Background())
 	defer ch.Stop(context.Background())
 
@@ -106,7 +106,7 @@ func TestDispatchAndSend(t *testing.T) {
 		RequestTimeout: 5,
 	}
 
-	ch, _ := NewOpenResponsesChannel(bc, cfg, msgBus)
+	ch, _ := NewOpenResponsesChannel(bc, cfg, nil, msgBus)
 	_ = ch.Start(context.Background())
 	defer ch.Stop(context.Background())
 
@@ -176,7 +176,7 @@ func TestPendingTimeout(t *testing.T) {
 		RequestTimeout: 1,
 	}
 
-	ch, _ := NewOpenResponsesChannel(bc, cfg, msgBus)
+	ch, _ := NewOpenResponsesChannel(bc, cfg, nil, msgBus)
 	_ = ch.Start(context.Background())
 	defer ch.Stop(context.Background())
 
@@ -238,7 +238,7 @@ func TestSendMultipleMessages(t *testing.T) {
 		RequestTimeout: 5,
 	}
 
-	ch, _ := NewOpenResponsesChannel(bc, cfg, msgBus)
+	ch, _ := NewOpenResponsesChannel(bc, cfg, nil, msgBus)
 	_ = ch.Start(context.Background())
 	defer ch.Stop(context.Background())
 
@@ -291,7 +291,7 @@ func TestSend_ReasoningMessage(t *testing.T) {
 		RequestTimeout: 5,
 	}
 
-	ch, _ := NewOpenResponsesChannel(bc, cfg, msgBus)
+	ch, _ := NewOpenResponsesChannel(bc, cfg, nil, msgBus)
 	_ = ch.Start(context.Background())
 	defer ch.Stop(context.Background())
 
@@ -352,7 +352,7 @@ func newTestChannelWithStore(t *testing.T, token string) (*OpenResponsesChannel,
 		Token:          *config.NewSecureString(token),
 		RequestTimeout: 5,
 	}
-	ch, err := NewOpenResponsesChannel(bc, cfg, msgBus)
+	ch, err := NewOpenResponsesChannel(bc, cfg, nil, msgBus)
 	if err != nil {
 		t.Fatalf("failed to create channel: %v", err)
 	}
@@ -426,7 +426,7 @@ func TestSend_TextMessage(t *testing.T) {
 		RequestTimeout: 5,
 	}
 
-	ch, _ := NewOpenResponsesChannel(bc, cfg, msgBus)
+	ch, _ := NewOpenResponsesChannel(bc, cfg, nil, msgBus)
 	_ = ch.Start(context.Background())
 	defer ch.Stop(context.Background())
 
@@ -528,7 +528,7 @@ func TestSend_FunctionCallMessage(t *testing.T) {
 		RequestTimeout: 5,
 	}
 
-	ch, _ := NewOpenResponsesChannel(bc, cfg, msgBus)
+	ch, _ := NewOpenResponsesChannel(bc, cfg, nil, msgBus)
 	_ = ch.Start(context.Background())
 	defer ch.Stop(context.Background())
 

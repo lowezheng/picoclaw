@@ -26,7 +26,7 @@ func newTestChannel(t *testing.T, token string) (*OpenResponsesChannel, *bus.Mes
 		Token:          *config.NewSecureString(token),
 		RequestTimeout: 5,
 	}
-	ch, err := NewOpenResponsesChannel(bc, cfg, msgBus)
+	ch, err := NewOpenResponsesChannel(bc, cfg, nil, msgBus)
 	if err != nil {
 		t.Fatalf("failed to create channel: %v", err)
 	}
@@ -41,6 +41,7 @@ func TestServeHTTPMethodNotAllowed(t *testing.T) {
 	defer ch.Stop(context.Background())
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	req.Header.Set("Authorization", "Bearer secret")
 	rr := httptest.NewRecorder()
 	ch.ServeHTTP(rr, req)
 

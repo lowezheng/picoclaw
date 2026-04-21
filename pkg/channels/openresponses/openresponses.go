@@ -21,8 +21,9 @@ import (
 // compatible with the OpenResponses specification.
 type OpenResponsesChannel struct {
 	*channels.BaseChannel
-	bc     *config.Channel
-	config *config.OpenResponsesSettings
+	bc        *config.Channel
+	config    *config.OpenResponsesSettings
+	globalCfg *config.Config
 
 	convMu sync.Mutex
 	convs  map[string]*conversationState // conversationID -> state
@@ -43,6 +44,7 @@ type conversationState struct {
 func NewOpenResponsesChannel(
 	bc *config.Channel,
 	cfg *config.OpenResponsesSettings,
+	globalCfg *config.Config,
 	messageBus *bus.MessageBus,
 ) (*OpenResponsesChannel, error) {
 	base := channels.NewBaseChannel(
@@ -57,8 +59,17 @@ func NewOpenResponsesChannel(
 		BaseChannel: base,
 		bc:          bc,
 		config:      cfg,
+		globalCfg:   globalCfg,
 		convs:       make(map[string]*conversationState),
 	}, nil
+}
+
+func (c *OpenResponsesChannel) sessionsDir() string {
+	if c.globalCfg == nil {
+		return ""
+	}
+	ws := c.globalCfg.Agents.Defaults.Workspace
+	return resolveSessionsDir(ws)
 }
 
 // Start implements channels.Channel.

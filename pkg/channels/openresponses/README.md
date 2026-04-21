@@ -32,74 +32,6 @@ channel_list:
       token: "24cdcc7e2ed4ab5f67ed12301685a412"
 ```
 
-## curl Test Examples
-
-### 1. Basic non-streaming request
-
-```bash
-curl -X POST http://localhost:18790/v1/responses \
-  -H "Authorization: Bearer 24cdcc7e2ed4ab5f67ed12301685a412" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "input": "Hello, how are you?"
-  }'
-```
-
-### 2. Request with conversation_id (session continuity)
-
-```bash
-curl -X POST http://localhost:18790/v1/responses \
-  -H "Authorization: Bearer 570694ff7910121aaf9feea5f42e6263" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "input": "What is the weather like?",
-    "conversation_id": "conv_123"
-  }'
-```
-
-### 3. SSE streaming request
-
-```bash
-curl -N -v -X POST http://10.8.34.191:28790/v1/responses \
-  -H "Authorization: Bearer 3db05261ae20c45825aedcb832a67aef" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "input": "今天天气",
-    "stream": true
-  }'
-```
-
-```bash
-curl -X POST http://localhost:18790/v1/responses \
-  -H "Authorization: Bearer 24cdcc7e2ed4ab5f67ed12301685a412" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "input": [
-      {"type": "message", "role": "user", "content": "Explain quantum computing"}
-    ],
-    "conversation_id": "conv_456"
-  }'
-```
-
-### 4. Invalid token (should return 401)
-
-```bash
-curl -X POST http://localhost:18790/v1/responses \
-  -H "Authorization: Bearer wrong-token" \
-  -H "Content-Type: application/json" \
-  -d '{"input": "test"}'
-```
-
-### 5. Empty input (should return 400)
-
-```bash
-curl -X POST http://localhost:18790/v1/responses \
-  -H "Authorization: Bearer 24cdcc7e2ed4ab5f67ed12301685a412" \
-  -H "Content-Type: application/json" \
-  -d '{"input": "   "}'
-```
-
----
 
 ## OpenResponses Specification Reference
 
@@ -170,32 +102,23 @@ Items are the atomic unit of context. They are **bidirectional** (can be sent as
 
 ```json
 {
-  "type": "message",
-  "role": "user",
-  "content": "Why do developers prefer dark mode?"
+  "input": "Why do developers prefer dark mode?",
+  "stream": true,
+  "conversation_id": "{uuid}"
 }
 ```
+
 
 Content can be a string or an array of content parts for multimodal input:
 
 ```json
 {
-  "type": "message",
-  "role": "user",
+  "stream": true,
+  "conversation_id": "{uuid}",
   "content": [
-    { "type": "input_text", "text": "Describe this image" },
-    { "type": "input_image", "image_url": "https://example.com/image.png" }
+    { "type": "input_text", "content": "Describe this image" },
+    { "type": "input_image", "content": "data:xxxx/pdf;base64,xxxx" }
   ]
-}
-```
-
-#### `function_call_output` / `tool_result` (tool results returned to model)
-
-```json
-{
-  "type": "function_call_output",
-  "call_id": "call_xxx",
-  "output": "25 degrees and sunny"
 }
 ```
 
@@ -227,7 +150,15 @@ All items share these required fields: `id`, `type`, `status`.
   "arguments": "{\"city\":\"Beijing\"}"
 }
 ```
+#### `function_call_output` / `tool_result` (tool results returned to model)
 
+```json
+{
+  "type": "function_call_output",
+  "call_id": "call_xxx",
+  "output": "25 degrees and sunny"
+}
+```
 #### `reasoning`
 
 ```json
