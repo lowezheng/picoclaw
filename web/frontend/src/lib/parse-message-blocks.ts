@@ -1,38 +1,29 @@
 const MESSAGE_BLOCK_REGEX =
   /---MESSAGE_START---\s*\n?([\s\S]*?)\n?\s*---MESSAGE_END---/g
 
-export interface DataQualitySummary {
-  原始数据纯度: string
-  来源权威性: string | number
-  数据时效性: string | number
-  可溯源占比: string
-  一致性校验: string
-  置信度得分: number
+export interface Dimension {
+  name: string
+  score: number
+  weight: number
+  reason: string
 }
 
-export interface DataQualityItem {
-  type: string
-  name: string
+export interface Source {
+  toolName: string
+  keyData: string
+  citationType: "direct" | "summary" | "none"
 }
 
 export type ParsedBlock =
   | { type: "text"; content: string }
   | { type: "selection"; options: string[] }
-  | { type: "dataquality"; summary: DataQualitySummary; items: DataQualityItem[] }
-
-function parsePercent(value: string | number): number {
-  if (typeof value === "number") return value
-  const num = parseFloat(value.replace(/[^0-9.]/g, ""))
-  return isNaN(num) ? 0 : num
-}
-
-function extractStarRating(score: number): { stars: number; label: string } {
-  if (score >= 95) return { stars: 5, label: "⭐⭐⭐⭐⭐" }
-  if (score >= 85) return { stars: 4, label: "⭐⭐⭐⭐" }
-  if (score >= 75) return { stars: 3, label: "⭐⭐⭐" }
-  if (score >= 65) return { stars: 2, label: "⭐⭐" }
-  return { stars: 1, label: "⭐" }
-}
+  | {
+      type: "dataquality"
+      overallScore: number
+      rating: string
+      dimensions: Dimension[]
+      sources: Source[]
+    }
 
 export function parseMessageBlocks(content: string): ParsedBlock[] {
   const blocks: ParsedBlock[] = []
@@ -58,22 +49,30 @@ export function parseMessageBlocks(content: string): ParsedBlock[] {
         blocks.push({ type: "selection", options: parsed.options })
       } else if (
         parsed.messageType === "dataquality" &&
-        parsed.summary &&
-        Array.isArray(parsed.items)
+        typeof parsed.overallScore === "number" &&
+        Array.isArray(parsed.dimensions)
       ) {
-        const score = Number(parsed.summary["置信度得分"]) || 0
         blocks.push({
           type: "dataquality",
-          summary: {
-            ...parsed.summary,
-            置信度得分: score,
-            原始数据纯度: String(parsed.summary["原始数据纯度"] || "0%"),
-            来源权威性: parsed.summary["来源权威性"] ?? "0",
-            数据时效性: parsed.summary["数据时效性"] ?? "0",
-            可溯源占比: String(parsed.summary["可溯源占比"] || "0%"),
-            一致性校验: String(parsed.summary["一致性校验"] || "0%"),
-          },
-          items: parsed.items,
+          overallScore: parsed.overallScore,
+          rating: String(parsed.rating ?? ""),
+          dimensions: parsed.dimensions.map((d: Record<string, unknown>) => ({
+            name: String(d.name ?? ""),
+            score: Number(d.score ?? 0),
+            weight: Number(d.weight ?? 0),
+            reason: String(d.reason ?? ""),
+          })),
+          sources: Array.isArray(parsed.sources)
+            ? parsed.sources.map((s: Record<string, unknown>) => ({
+                toolName: String(s.toolName ?? ""),
+                keyData: String(s.keyData ?? ""),
+                citationType: ["direct", "summary", "none"].includes(
+                  String(s.citationType),
+                )
+                  ? (String(s.citationType) as "direct" | "summary" | "none")
+                  : "none",
+              }))
+            : [],
         })
       } else {
         blocks.push({ type: "text", content: fullMatch })
@@ -94,5 +93,3 @@ export function parseMessageBlocks(content: string): ParsedBlock[] {
 
   return blocks
 }
-
-export { parsePercent, extractStarRating }

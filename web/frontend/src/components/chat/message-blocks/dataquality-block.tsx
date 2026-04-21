@@ -1,65 +1,124 @@
 import { useState } from "react"
-import { IconChevronDown, IconChevronUp } from "@tabler/icons-react"
+import {
+  IconChevronDown,
+  IconChevronUp,
+  IconQuote,
+  IconBook,
+  IconX,
+} from "@tabler/icons-react"
 import { useTranslation } from "react-i18next"
 
 import { cn } from "@/lib/utils"
-import {
-  type DataQualityItem,
-  type DataQualitySummary,
-  extractStarRating,
-  parsePercent,
-} from "@/lib/parse-message-blocks"
+import type { Dimension, Source } from "@/lib/parse-message-blocks"
 
 interface DataQualityBlockProps {
-  summary: DataQualitySummary
-  items: DataQualityItem[]
+  overallScore: number
+  rating: string
+  dimensions: Dimension[]
+  sources: Source[]
 }
 
-function ProgressBar({
+function ScoreBar({
   label,
-  value,
-  max = 100,
+  score,
+  weight,
+  reason,
 }: {
   label: string
-  value: number
-  max?: number
+  score: number
+  weight: number
+  reason: string
 }) {
-  const pct = Math.min(100, Math.max(0, (value / max) * 100))
+  const pct = Math.min(100, Math.max(0, score))
+  const colorClass =
+    score >= 90
+      ? "bg-emerald-500 dark:bg-emerald-400"
+      : score >= 70
+        ? "bg-amber-500 dark:bg-amber-400"
+        : "bg-rose-500 dark:bg-rose-400"
+
   return (
-    <div className="flex items-center gap-2 text-xs">
-      <span className="w-20 shrink-0 text-slate-500 dark:text-slate-400">
-        {label}
-      </span>
-      <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-700">
-        <div
-          className="h-full rounded-full bg-emerald-500 transition-all duration-500 dark:bg-emerald-400"
-          style={{ width: `${pct}%` }}
-        />
+    <div className="space-y-1">
+      <div className="flex items-center gap-2 text-xs">
+        <span className="w-24 shrink-0 font-medium text-slate-600 dark:text-slate-300">
+          {label}
+        </span>
+        <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-700">
+          <div
+            className={cn("h-full rounded-full transition-all duration-500", colorClass)}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        <span className="w-8 shrink-0 text-right tabular-nums text-slate-700 dark:text-slate-200">
+          {score}
+        </span>
+        <span className="inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[10px] tabular-nums text-slate-500 dark:bg-slate-700 dark:text-slate-400">
+          {(weight * 100).toFixed(0)}%
+        </span>
       </div>
-      <span className="w-10 shrink-0 text-right tabular-nums text-slate-600 dark:text-slate-300">
-        {value}
-      </span>
+      {reason && (
+        <p className="ml-[6.5rem] text-[11px] text-slate-400 dark:text-slate-500">
+          {reason}
+        </p>
+      )}
     </div>
   )
 }
 
-export function DataQualityBlock({ summary, items }: DataQualityBlockProps) {
+function CitationBadge({ type }: { type: Source["citationType"] }) {
+  const config = {
+    direct: {
+      icon: <IconQuote className="h-3 w-3" />,
+      label: "直接引用",
+      className:
+        "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30",
+    },
+    summary: {
+      icon: <IconBook className="h-3 w-3" />,
+      label: "概括",
+      className:
+        "bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/15 dark:text-sky-300 dark:border-sky-500/30",
+    },
+    none: {
+      icon: <IconX className="h-3 w-3" />,
+      label: "未提及",
+      className:
+        "bg-slate-50 text-slate-500 border-slate-200 dark:bg-slate-700/50 dark:text-slate-400 dark:border-slate-600",
+    },
+  }
+  const c = config[type]
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px]",
+        c.className,
+      )}
+    >
+      {c.icon}
+      {c.label}
+    </span>
+  )
+}
+
+export function DataQualityBlock({
+  overallScore,
+  rating,
+  dimensions,
+  sources,
+}: DataQualityBlockProps) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
-  const score = summary["置信度得分"]
-  const { label: starLabel } = extractStarRating(score)
 
-  const dimensions = [
-    { label: t("chat.dqPurity", "原始数据纯度"), value: parsePercent(summary["原始数据纯度"]) },
-    { label: t("chat.dqAuthority", "来源权威性"), value: parsePercent(summary["来源权威性"]) },
-    { label: t("chat.dqTimeliness", "数据时效性"), value: parsePercent(summary["数据时效性"]) },
-    { label: t("chat.dqTraceability", "可溯源占比"), value: parsePercent(summary["可溯源占比"]) },
-    { label: t("chat.dqConsistency", "一致性校验"), value: parsePercent(summary["一致性校验"]) },
-  ]
+  const scoreColor =
+    overallScore >= 90
+      ? "text-emerald-600 dark:text-emerald-400"
+      : overallScore >= 70
+        ? "text-amber-600 dark:text-amber-400"
+        : "text-rose-600 dark:text-rose-400"
 
   return (
     <div className="mt-3 rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800/60">
-      {/* Header - 始终显示 */}
+      {/* Header — 始终显示 */}
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
@@ -76,10 +135,15 @@ export function DataQualityBlock({ summary, items }: DataQualityBlockProps) {
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-lg font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
-            {score}
+          <span
+            className={cn(
+              "text-lg font-bold tabular-nums",
+              scoreColor,
+            )}
+          >
+            {overallScore}
           </span>
-          <span className="text-sm">{starLabel}</span>
+          <span className="text-sm">{rating}</span>
           {expanded ? (
             <IconChevronUp className="h-4 w-4 text-slate-400" />
           ) : (
@@ -88,36 +152,41 @@ export function DataQualityBlock({ summary, items }: DataQualityBlockProps) {
         </div>
       </button>
 
-      {/* Body - 展开后显示 */}
+      {/* Body — 展开后显示 */}
       {expanded && (
-        <div className="space-y-3 px-4 py-3">
-          <div className="space-y-2">
-            {dimensions.map((dim) => (
-              <ProgressBar
-                key={dim.label}
-                label={dim.label}
-                value={dim.value}
+        <div className="space-y-4 px-4 py-3">
+          {/* Dimensions */}
+          <div className="space-y-3">
+            {dimensions.map((dim, idx) => (
+              <ScoreBar
+                key={idx}
+                label={dim.name}
+                score={dim.score}
+                weight={dim.weight}
+                reason={dim.reason}
               />
             ))}
           </div>
 
-          {items.length > 0 && (
+          {/* Sources */}
+          {sources.length > 0 && (
             <>
               <div className="border-t border-slate-100 dark:border-slate-700/60" />
               <div>
-                <span className="mb-1.5 block text-xs font-medium text-slate-500 dark:text-slate-400">
+                <span className="mb-2 block text-xs font-medium text-slate-500 dark:text-slate-400">
                   📋 {t("chat.dqSources", "数据来源")}
                 </span>
-                <div className="space-y-1">
-                  {items.map((item, idx) => (
+                <div className="space-y-1.5">
+                  {sources.map((src, idx) => (
                     <div
                       key={idx}
                       className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300"
                     >
-                      <span className="inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-slate-700 dark:text-slate-400">
-                        {item.type}
+                      <span className="inline-block rounded bg-slate-100 px-1.5 py-0.5 font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                        {src.toolName}
                       </span>
-                      <span>{item.name}</span>
+                      <span className="flex-1 truncate">{src.keyData}</span>
+                      <CitationBadge type={src.citationType} />
                     </div>
                   ))}
                 </div>

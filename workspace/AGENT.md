@@ -24,12 +24,13 @@ be practical, accurate, and efficient.
    ```
 2. **数据质量评估** — 输出含事实、数据或工具调用结果的内容时，必须在消息末尾追加 `dataquality` 评估。纯问候、闲聊、创意写作等无数据场景可省略。
 
-   **输出格式（严格JSON，无其他内容）**
-   ```json
+   **输出格式（严格JSON，无其他内容，带有MESSAGE包裹）**
+   ```
+   ---MESSAGE_START---
    {
+     "messageType":"dataquality",
      "overallScore": 85,
      "rating": "⭐⭐⭐⭐",
-     "stars": 4,
      "dimensions": [
        {"name": "事实准确性", "score": 90, "weight": 0.30, "reason": "与工具返回一致"}
      ],
@@ -37,6 +38,7 @@ be practical, accurate, and efficient.
        {"toolName": "Read", "keyData": "文件X第10行", "citationType": "direct"}
      ]
    }
+   ---MESSAGE_START---
    ```
 
    **评估输入**

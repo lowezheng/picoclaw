@@ -110,8 +110,10 @@ export function AssistantMessage({
               return (
                 <DataQualityBlock
                   key={idx}
-                  summary={block.summary}
-                  items={block.items}
+                  overallScore={block.overallScore}
+                  rating={block.rating}
+                  dimensions={block.dimensions}
+                  sources={block.sources}
                 />
               )
             }
