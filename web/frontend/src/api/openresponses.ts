@@ -15,8 +15,14 @@ interface OpenResponsesSetupResponse {
   changed: boolean
 }
 
+interface ContentPart {
+  type: "input_text" | "input_image"
+  content: string
+}
+
 interface OpenResponsesChatRequest {
-  input: string | Array<{ type: string; role: string; content: string }>
+  input?: string
+  content?: ContentPart[]
   conversation_id?: string
   stream?: boolean
 }
@@ -251,4 +257,4 @@ export async function sendOpenResponsesMessage(
   return outputTexts.join("\n\n")
 }
 
-export type { OpenResponsesTokenResponse, OpenResponsesSetupResponse, OpenResponsesChatRequest }
+export type { OpenResponsesTokenResponse, OpenResponsesSetupResponse, OpenResponsesChatRequest, ContentPart }

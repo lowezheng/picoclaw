@@ -1,4 +1,4 @@
-import { IconArrowUp, IconPhotoPlus, IconX } from "@tabler/icons-react"
+import { IconArrowUp, IconPaperclip, IconX } from "@tabler/icons-react"
 import type { KeyboardEvent } from "react"
 import { useTranslation } from "react-i18next"
 import TextareaAutosize from "react-textarea-autosize"
@@ -66,11 +66,19 @@ export function ChatComposer({
                 key={`${attachment.url}-${index}`}
                 className="bg-background relative h-20 w-20 overflow-hidden rounded-xl border"
               >
-                <img
-                  src={attachment.url}
-                  alt={attachment.filename || t("chat.uploadedImage")}
-                  className="h-full w-full object-cover"
-                />
+                {attachment.type === "image" ? (
+                  <img
+                    src={attachment.url}
+                    alt={attachment.filename || t("chat.uploadedImage")}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-full w-full flex-col items-center justify-center gap-1 px-1">
+                    <span className="text-muted-foreground text-xs truncate w-full text-center">
+                      {attachment.filename || t("chat.uploadedImage")}
+                    </span>
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => onRemoveAttachment(index)}
@@ -117,7 +125,7 @@ export function ChatComposer({
               aria-label={t("chat.attachImage")}
               title={t("chat.attachImage")}
             >
-              <IconPhotoPlus className="size-4" />
+              <IconPaperclip className="size-4" />
             </Button>
           </div>
 

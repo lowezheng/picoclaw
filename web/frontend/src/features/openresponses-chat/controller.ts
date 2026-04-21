@@ -1,6 +1,6 @@
 import { toast } from "sonner"
 
-import { sendOpenResponsesMessage } from "@/api/openresponses"
+import { sendOpenResponsesMessage, type ContentPart } from "@/api/openresponses"
 import { loadSessionMessages } from "@/features/chat/history"
 import i18n from "@/i18n"
 import { generateSessionId } from "@/features/chat/state"
@@ -39,7 +39,7 @@ export async function sendOpenResponsesChatMessage({
 }: SendChatMessageInput): Promise<boolean> {
   const normalizedContent = content.trim()
   const normalizedAttachments = attachments.filter(
-    (a) => a.type === "image" && a.url,
+    (a) => a.url,
   )
 
   if (!normalizedContent && normalizedAttachments.length === 0) {
@@ -71,7 +71,21 @@ export async function sendOpenResponsesChatMessage({
   try {
     // Only send the current user input; the backend manages conversation
     // history via conversation_id.
-    const input = normalizedContent
+    const hasAttachments = normalizedAttachments.length > 0
+
+    let requestBody: { input?: string; content?: ContentPart[]; conversation_id: string; stream: boolean }
+    if (hasAttachments) {
+      const contentParts: ContentPart[] = []
+      if (normalizedContent) {
+        contentParts.push({ type: "input_text", content: normalizedContent })
+      }
+      for (const a of normalizedAttachments) {
+        contentParts.push({ type: "input_image", content: a.url })
+      }
+      requestBody = { content: contentParts, conversation_id: sessionId, stream: true }
+    } else {
+      requestBody = { input: normalizedContent, conversation_id: sessionId, stream: true }
+    }
 
     const assistantMessages = new Map<
       number,
@@ -79,12 +93,7 @@ export async function sendOpenResponsesChatMessage({
     >()
     const assistantImages = new Map<number, string[]>()
 
-    await sendOpenResponsesMessage(
-      {
-        input,
-        conversation_id: sessionId,
-        stream: true,
-      },
+    await sendOpenResponsesMessage(requestBody,
       (event) => {
         if (event.type === "item_added" && typeof event.outputIndex === "number") {
           if (event.itemType === "function_call") {

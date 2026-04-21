@@ -21,15 +21,8 @@ import { useGateway } from "@/hooks/use-gateway"
 import { detectToolCall } from "@/lib/detect-tool-call"
 import type { ChatAttachment } from "@/store/openresponses-chat"
 
-const MAX_IMAGE_SIZE_BYTES = 7 * 1024 * 1024
-const MAX_IMAGE_SIZE_LABEL = "7 MB"
-const ALLOWED_IMAGE_TYPES = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "image/bmp",
-])
+const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024
+const MAX_FILE_SIZE_LABEL = "20 MB"
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -166,7 +159,7 @@ export function OpenResponsesChatPage() {
     }
   }
 
-  const handleAddImages = () => {
+  const handleAddFiles = () => {
     if (!canInput) return
     fileInputRef.current?.click()
   }
@@ -175,7 +168,7 @@ export function OpenResponsesChatPage() {
     setAttachments((prev) => prev.filter((_, itemIndex) => itemIndex !== index))
   }
 
-  const handleImageSelection = async (event: ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelection = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? [])
     event.target.value = ""
 
@@ -185,20 +178,11 @@ export function OpenResponsesChatPage() {
 
     const nextAttachments: ChatAttachment[] = []
     for (const file of files) {
-      if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
-        toast.error(
-          t("chat.invalidImage", {
-            name: file.name,
-          }),
-        )
-        continue
-      }
-
-      if (file.size > MAX_IMAGE_SIZE_BYTES) {
+      if (file.size > MAX_FILE_SIZE_BYTES) {
         toast.error(
           t("chat.imageTooLarge", {
             name: file.name,
-            size: MAX_IMAGE_SIZE_LABEL,
+            size: MAX_FILE_SIZE_LABEL,
           }),
         )
         continue
@@ -206,7 +190,7 @@ export function OpenResponsesChatPage() {
 
       try {
         nextAttachments.push({
-          type: "image",
+          type: file.type.startsWith("image/") ? "image" : "file",
           filename: file.name,
           url: await readFileAsDataUrl(file),
         })
@@ -329,16 +313,15 @@ export function OpenResponsesChatPage() {
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/jpeg,image/png,image/gif,image/webp,image/bmp"
         className="hidden"
-        onChange={handleImageSelection}
+        onChange={handleFileSelection}
       />
 
       <ChatComposer
         input={input}
         attachments={attachments}
         onInputChange={setInput}
-        onAddImages={handleAddImages}
+        onAddImages={handleAddFiles}
         onRemoveAttachment={handleRemoveAttachment}
         onSend={handleSend}
         inputDisabledReason={inputDisabledReason}
