@@ -151,7 +151,7 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 	var finalContent string
 	var activeStreamer bus.Streamer
 	defer func() {
-		if activeStreamer != nil {
+		if activeStreamer != nil && turnStatus != TurnEndStatusError {
 			activeStreamer.Cancel(turnCtx)
 			activeStreamer = nil
 		}
@@ -1735,7 +1735,6 @@ func (al *AgentLoop) callLLMStream(
 		},
 	)
 	if err != nil {
-		streamer.Cancel(ctx)
 		return nil, err
 	}
 

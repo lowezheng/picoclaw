@@ -110,7 +110,7 @@ func TestDispatchAndSend(t *testing.T) {
 	_ = ch.Start(context.Background())
 	defer ch.Stop(context.Background())
 
-	stream, queued, err := ch.dispatch(context.Background(), "conv_123", "Hello agent")
+	stream, queued, err := ch.dispatch(context.Background(), "conv_123", "Hello agent", nil)
 	if err != nil {
 		t.Fatalf("dispatch failed: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestPendingTimeout(t *testing.T) {
 	_ = ch.Start(context.Background())
 	defer ch.Stop(context.Background())
 
-	stream, queued, err := ch.dispatch(context.Background(), "conv_timeout", "test")
+	stream, queued, err := ch.dispatch(context.Background(), "conv_timeout", "test", nil)
 	if err != nil {
 		t.Fatalf("dispatch failed: %v", err)
 	}
@@ -382,7 +382,7 @@ func TestSendMedia(t *testing.T) {
 		t.Fatalf("failed to store image: %v", err)
 	}
 
-	stream, _, err := ch.dispatch(context.Background(), "conv_img", "generate image")
+	stream, _, err := ch.dispatch(context.Background(), "conv_img", "generate image", nil)
 	if err != nil {
 		t.Fatalf("dispatch failed: %v", err)
 	}
@@ -491,7 +491,7 @@ func TestSendMediaSkipNonImageParts(t *testing.T) {
 		ContentType: "image/png",
 	}, "test-scope")
 
-	stream, _, _ := ch.dispatch(context.Background(), "conv_skip", "test")
+	stream, _, _ := ch.dispatch(context.Background(), "conv_skip", "test", nil)
 
 	ids, err := ch.SendMedia(context.Background(), bus.OutboundMediaMessage{
 		Channel: "openresponses",

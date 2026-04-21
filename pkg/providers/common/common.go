@@ -132,6 +132,20 @@ func SerializeMessages(messages []Message) []any {
 						"format": format,
 					},
 				})
+				continue
+			}
+
+			// Non-image, non-audio files (e.g. PDF).
+			// Many multimodal providers do not support the "file" content type and
+			// only accept "image_url".  We therefore send PDFs as image_url so
+			// they are delivered to the model instead of being silently dropped.
+			if _, _, ok := parseDataFileURL(mediaURL); ok {
+				parts = append(parts, map[string]any{
+					"type": "image_url",
+					"image_url": map[string]any{
+						"url": mediaURL,
+					},
+				})
 			}
 		}
 
@@ -171,6 +185,63 @@ func parseDataAudioURL(mediaURL string) (format, data string, ok bool) {
 		return "", "", false
 	}
 	return format, data, true
+}
+
+func parseDataFileURL(mediaURL string) (mime, data string, ok bool) {
+	if !strings.HasPrefix(mediaURL, "data:") {
+		return "", "", false
+	}
+	payload := strings.TrimPrefix(mediaURL, "data:")
+	meta, data, found := strings.Cut(payload, ",")
+	if !found {
+		return "", "", false
+	}
+	mime, _, _ = strings.Cut(meta, ";")
+	mime = strings.TrimSpace(mime)
+	data = strings.TrimSpace(data)
+	if mime == "" || data == "" {
+		return "", "", false
+	}
+	// Exclude image and audio types handled elsewhere
+	if strings.HasPrefix(mime, "image/") || strings.HasPrefix(mime, "audio/") {
+		return "", "", false
+	}
+	return mime, data, true
+}
+
+func inferFilenameFromMime(mime string) string {
+	switch mime {
+	case "application/pdf":
+		return "document.pdf"
+	case "text/plain":
+		return "document.txt"
+	case "text/html":
+		return "document.html"
+	case "text/markdown":
+		return "document.md"
+	case "application/json":
+		return "document.json"
+	case "application/xml", "text/xml":
+		return "document.xml"
+	case "application/javascript", "text/javascript":
+		return "script.js"
+	case "text/css":
+		return "style.css"
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+		return "document.docx"
+	case "application/msword":
+		return "document.doc"
+	case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+		return "spreadsheet.xlsx"
+	case "application/vnd.ms-excel":
+		return "spreadsheet.xls"
+	default:
+		if idx := strings.LastIndex(mime, "/"); idx != -1 && idx < len(mime)-1 {
+			ext := strings.TrimPrefix(mime[idx+1:], "x-")
+			return "document." + ext
+		}
+		return "document.bin"
+	}
 }
 
 // --- Response parsing ---

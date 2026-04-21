@@ -12,17 +12,18 @@ import (
 
 // CreateResponseRequest mirrors the OpenResponses POST /v1/responses request body.
 type CreateResponseRequest struct {
-	Model             string        `json:"model,omitempty"`
-	Input             any           `json:"input"` // string or []InputItem
-	Instructions      string        `json:"instructions,omitempty"`
-	PreviousResponseID string       `json:"previous_response_id,omitempty"`
-	ConversationID    string        `json:"conversation_id,omitempty"`
-	Stream            bool          `json:"stream,omitempty"`
-	Tools             []Tool        `json:"tools,omitempty"`
-	ToolChoice        any           `json:"tool_choice,omitempty"`
-	Temperature       *float64      `json:"temperature,omitempty"`
-	MaxOutputTokens   int           `json:"max_output_tokens,omitempty"`
-	Truncation        string        `json:"truncation,omitempty"`
+	Model              string        `json:"model,omitempty"`
+	Input              any           `json:"input"` // string or []InputItem
+	Content            []ContentPart `json:"content,omitempty"`
+	Instructions       string        `json:"instructions,omitempty"`
+	PreviousResponseID string        `json:"previous_response_id,omitempty"`
+	ConversationID     string        `json:"conversation_id,omitempty"`
+	Stream             bool          `json:"stream,omitempty"`
+	Tools              []Tool        `json:"tools,omitempty"`
+	ToolChoice         any           `json:"tool_choice,omitempty"`
+	Temperature        *float64      `json:"temperature,omitempty"`
+	MaxOutputTokens    int           `json:"max_output_tokens,omitempty"`
+	Truncation         string        `json:"truncation,omitempty"`
 }
 
 // InputItem represents a single turn in the conversation history.
@@ -34,10 +35,8 @@ type InputItem struct {
 
 // ContentPart represents a multimodal content part.
 type ContentPart struct {
-	Type     string `json:"type"` // "input_text" | "input_image" | "input_audio"
-	Text     string `json:"text,omitempty"`
-	ImageURL string `json:"image_url,omitempty"`
-	AudioURL string `json:"audio_url,omitempty"`
+	Type    string `json:"type"`    // "input_text" | "input_image" | "input_file"
+	Content string `json:"content"` // unified value field
 }
 
 // Tool represents a tool definition.

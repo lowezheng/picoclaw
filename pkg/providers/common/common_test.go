@@ -129,6 +129,43 @@ func TestSerializeMessages_WithAudioMedia(t *testing.T) {
 	}
 }
 
+func TestSerializeMessages_WithFileMedia(t *testing.T) {
+	messages := []Message{
+		{Role: "user", Content: "summarize this", Media: []string{"data:application/pdf;base64,abc123"}},
+	}
+	result := SerializeMessages(messages)
+
+	data, _ := json.Marshal(result)
+	var msgs []map[string]any
+	json.Unmarshal(data, &msgs)
+
+	content, ok := msgs[0]["content"].([]any)
+	if !ok {
+		t.Fatalf("expected array content for media message, got %T", msgs[0]["content"])
+	}
+	if len(content) != 2 {
+		t.Fatalf("expected 2 content parts, got %d", len(content))
+	}
+
+	// PDFs are sent as image_url for compatibility with providers that do not
+	// support the "file" content type.
+	pdfPart, ok := content[1].(map[string]any)
+	if !ok {
+		t.Fatalf("expected pdf content part to be an object, got %T", content[1])
+	}
+	if pdfPart["type"] != "image_url" {
+		t.Fatalf("pdf part type = %v, want image_url", pdfPart["type"])
+	}
+
+	imageURL, ok := pdfPart["image_url"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected image_url object, got %T", pdfPart["image_url"])
+	}
+	if imageURL["url"] != "data:application/pdf;base64,abc123" {
+		t.Fatalf("url = %v, want data:application/pdf;base64,abc123", imageURL["url"])
+	}
+}
+
 func TestSerializeMessages_MediaWithToolCallID(t *testing.T) {
 	messages := []Message{
 		{Role: "tool", Content: "result", Media: []string{"data:image/png;base64,xyz"}, ToolCallID: "call_1"},
@@ -624,5 +661,76 @@ func TestParseResponse_WithThoughtSignature(t *testing.T) {
 	if out.ToolCalls[0].ExtraContent.Google.ThoughtSignature != "sig123" {
 		t.Errorf("ExtraContent.Google.ThoughtSignature = %q, want %q",
 			out.ToolCalls[0].ExtraContent.Google.ThoughtSignature, "sig123")
+	}
+}
+
+// --- parseDataFileURL tests ---
+
+func TestParseDataFileURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wantMime string
+		wantData string
+		wantOk   bool
+	}{
+		{"pdf", "data:application/pdf;base64,abc123", "application/pdf", "abc123", true},
+		{"text plain", "data:text/plain;base64,hello", "text/plain", "hello", true},
+		{"json", "data:application/json;base64,eyJrZXkiOiJ2YWx1ZSJ9", "application/json", "eyJrZXkiOiJ2YWx1ZSJ9", true},
+		{"image skipped", "data:image/png;base64,abc123", "", "", false},
+		{"audio skipped", "data:audio/ogg;base64,abc123", "", "", false},
+		{"not data url", "https://example.com/file.pdf", "", "", false},
+		{"empty", "", "", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mime, data, ok := parseDataFileURL(tt.input)
+			if ok != tt.wantOk {
+				t.Errorf("parseDataFileURL(%q) ok = %v, want %v", tt.input, ok, tt.wantOk)
+			}
+			if ok {
+				if mime != tt.wantMime {
+					t.Errorf("parseDataFileURL(%q) mime = %q, want %q", tt.input, mime, tt.wantMime)
+				}
+				if data != tt.wantData {
+					t.Errorf("parseDataFileURL(%q) data = %q, want %q", tt.input, data, tt.wantData)
+				}
+			}
+		})
+	}
+}
+
+// --- inferFilenameFromMime tests ---
+
+func TestInferFilenameFromMime(t *testing.T) {
+	tests := []struct {
+		mime string
+		want string
+	}{
+		{"application/pdf", "document.pdf"},
+		{"text/plain", "document.txt"},
+		{"text/html", "document.html"},
+		{"text/markdown", "document.md"},
+		{"application/json", "document.json"},
+		{"application/xml", "document.xml"},
+		{"text/xml", "document.xml"},
+		{"application/javascript", "script.js"},
+		{"text/javascript", "script.js"},
+		{"text/css", "style.css"},
+		{"application/vnd.openxmlformats-officedocument.wordprocessingml.document", "document.docx"},
+		{"application/msword", "document.doc"},
+		{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "spreadsheet.xlsx"},
+		{"application/vnd.ms-excel", "spreadsheet.xls"},
+		{"application/octet-stream", "document.octet-stream"},
+		{"application/x-zip-compressed", "document.zip-compressed"},
+		{"unknown", "document.bin"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mime, func(t *testing.T) {
+			got := inferFilenameFromMime(tt.mime)
+			if got != tt.want {
+				t.Errorf("inferFilenameFromMime(%q) = %q, want %q", tt.mime, got, tt.want)
+			}
+		})
 	}
 }

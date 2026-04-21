@@ -126,7 +126,15 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 		"message_kind":    raw["message_kind"],
 		"content_preview": truncateString(msg.Content, 200),
 	})
-	if st.hasStreamer.Load() && raw["message_kind"] != "thought" && raw["message_kind"] != "function_call" && raw["message_kind"] != "turn_end" && raw["message_kind"] != "tool_timing" && raw["message_kind"] != "llm_timing" {
+	// Allow error messages through even when a streamer is active so that
+	// LLM failures are shown to the user instead of being silently dropped.
+	if st.hasStreamer.Load() &&
+		raw["message_kind"] != "thought" &&
+		raw["message_kind"] != "function_call" &&
+		raw["message_kind"] != "turn_end" &&
+		raw["message_kind"] != "tool_timing" &&
+		raw["message_kind"] != "llm_timing" &&
+		raw["message_kind"] != "error" {
 		logger.DebugCF("openresponses", "Send skipped (streamer active, not thought/fc/turn_end/timing)", map[string]any{
 			"conversation_id": conversationID,
 		})
@@ -185,6 +193,7 @@ func (c *OpenResponsesChannel) dispatch(
 	ctx context.Context,
 	conversationID string,
 	content string,
+	media []string,
 ) (*pendingStream, bool, error) {
 	c.convMu.Lock()
 	if st, ok := c.convs[conversationID]; ok && st.active.Load() {
@@ -208,7 +217,7 @@ func (c *OpenResponsesChannel) dispatch(
 			},
 		}
 
-		c.HandleInboundContext(ctx, conversationID, content, nil, inboundCtx, sender)
+		c.HandleInboundContext(ctx, conversationID, content, media, inboundCtx, sender)
 		return nil, true, nil
 	}
 
@@ -238,7 +247,7 @@ func (c *OpenResponsesChannel) dispatch(
 		},
 	}
 
-	c.HandleInboundContext(ctx, conversationID, content, nil, inboundCtx, sender)
+	c.HandleInboundContext(ctx, conversationID, content, media, inboundCtx, sender)
 	return s, false, nil
 }
 

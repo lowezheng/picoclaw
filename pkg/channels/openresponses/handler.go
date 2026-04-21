@@ -2,16 +2,20 @@ package openresponses
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/media"
 )
 
 // WebhookPath implements channels.WebhookHandler.
@@ -21,6 +25,7 @@ func (c *OpenResponsesChannel) WebhookPath() string {
 
 // ServeHTTP implements http.Handler.
 func (c *OpenResponsesChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+
 	if !c.IsRunning() {
 		http.Error(w, `{"error":"channel not running"}`, http.StatusServiceUnavailable)
 		return
@@ -78,8 +83,42 @@ func (c *OpenResponsesChannel) authenticate(r *http.Request) bool {
 
 // handleCreateResponse orchestrates the request through the PicoClaw agent.
 func (c *OpenResponsesChannel) handleCreateResponse(w http.ResponseWriter, r *http.Request, req *CreateResponseRequest) {
-	content := normalizeInput(req.Input)
-	if strings.TrimSpace(content) == "" {
+	content, media := extractRequestContent(req)
+
+	// Separate images (sent to LLM vision) from non-image files (saved to temp).
+	var imageMedia []string
+	var filePaths []string
+	for _, m := range media {
+		if isImageDataURL(m) {
+			imageMedia = append(imageMedia, m)
+			continue
+		}
+		if path, err := saveDataURLToTemp(m); err == nil {
+			filePaths = append(filePaths, path)
+		} else {
+			logger.WarnCF("openresponses", "Failed to save uploaded file to temp", map[string]any{
+				"error": err.Error(),
+			})
+		}
+	}
+
+	// Inject file paths into the user message so the AI can read them via tools.
+	if len(filePaths) > 0 {
+		var sb strings.Builder
+		if content != "" {
+			sb.WriteString(content)
+			sb.WriteString("\n\n")
+		}
+		sb.WriteString("用户上传了以下文件，如需读取请使用 read_file 工具：\n")
+		for _, p := range filePaths {
+			sb.WriteString("- ")
+			sb.WriteString(p)
+			sb.WriteString("\n")
+		}
+		content = sb.String()
+	}
+
+	if strings.TrimSpace(content) == "" && len(imageMedia) == 0 {
 		writeError(w, http.StatusBadRequest, "invalid_request", "Input content is empty")
 		return
 	}
@@ -94,7 +133,7 @@ func (c *OpenResponsesChannel) handleCreateResponse(w http.ResponseWriter, r *ht
 		ctx = c.ctx
 	}
 
-	stream, queued, err := c.dispatch(ctx, conversationID, content)
+	stream, queued, err := c.dispatch(ctx, conversationID, content, imageMedia)
 	if err != nil {
 		writeError(w, http.StatusTooManyRequests, "request_in_progress", err.Error())
 		return
@@ -841,6 +880,31 @@ func writeSSEEvent(w http.ResponseWriter, eventType string, data any) {
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, string(jsonBytes))
 }
 
+// extractRequestContent extracts text and media from the request.
+// It prefers req.Content array, falling back to req.Input for backward compatibility.
+func extractRequestContent(req *CreateResponseRequest) (string, []string) {
+	if len(req.Content) > 0 {
+		var textParts []string
+		var media []string
+		for _, part := range req.Content {
+			switch part.Type {
+			case "input_text":
+				if strings.TrimSpace(part.Content) != "" {
+					textParts = append(textParts, part.Content)
+				}
+			case "input_image", "input_file":
+				if strings.TrimSpace(part.Content) != "" {
+					media = append(media, part.Content)
+				}
+			}
+		}
+		return strings.Join(textParts, "\n"), media
+	}
+
+	// Fallback to legacy Input field
+	return normalizeInput(req.Input), nil
+}
+
 func writeError(w http.ResponseWriter, statusCode int, code, message string) {
 	var errType string
 	switch {
@@ -889,4 +953,88 @@ func stripImageURLsFromItem(item ResponseItem) ResponseItem {
 	}
 	item.Content = newContent
 	return item
+}
+
+// isImageDataURL returns true if the data URL has an image MIME type.
+func isImageDataURL(url string) bool {
+	return strings.HasPrefix(url, "data:image/")
+}
+
+// saveDataURLToTemp decodes a base64 data URL and writes it to the media temp
+// directory. Returns the absolute path of the saved file.
+func saveDataURLToTemp(dataURL string) (string, error) {
+	if !strings.HasPrefix(dataURL, "data:") {
+		return "", fmt.Errorf("not a data URL")
+	}
+
+	payload := strings.TrimPrefix(dataURL, "data:")
+	meta, dataBase64, found := strings.Cut(payload, ",")
+	if !found {
+		return "", fmt.Errorf("invalid data URL format")
+	}
+
+	mime, _, _ := strings.Cut(meta, ";")
+	mime = strings.TrimSpace(mime)
+
+	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(dataBase64))
+	if err != nil {
+		return "", fmt.Errorf("failed to decode base64: %w", err)
+	}
+
+	ext := extFromMime(mime)
+	tmpDir := media.TempDir()
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+		return "", fmt.Errorf("failed to create temp dir: %w", err)
+	}
+
+	filename := fmt.Sprintf("upload_%s%s", uuid.New().String(), ext)
+	path := filepath.Join(tmpDir, filename)
+
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return "", fmt.Errorf("failed to write file: %w", err)
+	}
+	return path, nil
+}
+
+// extFromMime returns a file extension for a MIME type.
+func extFromMime(mime string) string {
+	switch strings.ToLower(mime) {
+	case "application/pdf":
+		return ".pdf"
+	case "text/plain":
+		return ".txt"
+	case "text/html":
+		return ".html"
+	case "text/markdown":
+		return ".md"
+	case "application/json":
+		return ".json"
+	case "application/xml", "text/xml":
+		return ".xml"
+	case "application/javascript", "text/javascript":
+		return ".js"
+	case "text/css":
+		return ".css"
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+		return ".docx"
+	case "application/msword":
+		return ".doc"
+	case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+		return ".xlsx"
+	case "application/vnd.ms-excel":
+		return ".xls"
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	default:
+		if idx := strings.LastIndex(mime, "/"); idx != -1 && idx < len(mime)-1 {
+			return "." + strings.TrimPrefix(mime[idx+1:], "x-")
+		}
+		return ".bin"
+	}
 }
