@@ -20,12 +20,14 @@ import (
 )
 
 type ContextBuilder struct {
-	workspace          string
-	skillsLoader       *skills.SkillsLoader
-	memory             *MemoryStore
-	toolDiscoveryBM25  bool
-	toolDiscoveryRegex bool
-	splitOnMarker      bool
+	workspace               string
+	skillsLoader            *skills.SkillsLoader
+	memory                  *MemoryStore
+	toolDiscoveryBM25       bool
+	toolDiscoveryRegex      bool
+	splitOnMarker           bool
+	enableActionSuggestions bool
+	enableDataQualityRule   bool
 
 	// Cache for system prompt to avoid rebuilding on every call.
 	// This fixes issue #607: repeated reprocessing of the entire context.
@@ -57,6 +59,16 @@ func (cb *ContextBuilder) WithSplitOnMarker(enabled bool) *ContextBuilder {
 	return cb
 }
 
+func (cb *ContextBuilder) WithActionSuggestions(enabled bool) *ContextBuilder {
+	cb.enableActionSuggestions = enabled
+	return cb
+}
+
+func (cb *ContextBuilder) WithDataQualityRule(enabled bool) *ContextBuilder {
+	cb.enableDataQualityRule = enabled
+	return cb
+}
+
 func getGlobalConfigDir() string {
 	return config.GetHome()
 }
@@ -80,35 +92,80 @@ func NewContextBuilder(workspace string) *ContextBuilder {
 
 func (cb *ContextBuilder) getIdentity() string {
 	workspacePath, _ := filepath.Abs(filepath.Join(cb.workspace))
-	toolDiscovery := cb.getDiscoveryRule()
 	version := config.FormatVersion()
 
+	var optionalRules []string
+	nextRule := 5
+
+	if cb.enableActionSuggestions {
+		optionalRules = append(optionalRules,
+			fmt.Sprintf(
+				"%d. **推理后操作建议** — 每次向用户输出推理/分析结果后，必须紧接着补充后续操作建议，并以如下 JSON 格式包裹：\n"+
+					"   ```\n"+
+					"   ---MESSAGE_START---\n"+
+					"   {\"messageType\":\"selection\",\"options\":[\"选项 1\",\"选项 2\"]}\n"+
+					"   ---MESSAGE_END---\n"+
+					"   ```",
+				nextRule,
+			),
+		)
+		nextRule++
+	}
+
+	if cb.enableDataQualityRule {
+		optionalRules = append(optionalRules,
+			fmt.Sprintf(
+				"%d. **数据质量评估** — 输出含事实、数据或工具调用结果的内容时，必须在消息末尾追加 dataquality 评估。纯问候、闲聊、创意写作等无数据场景可省略。\n\n"+
+					"   输出格式（严格JSON，无其他内容，带有MESSAGE包裹）：\n"+
+					"   ```\n"+
+					"   ---MESSAGE_START---\n"+
+					"   {\"messageType\":\"dataquality\",\"overallScore\": 85,\"rating\": \"⭐⭐⭐⭐\",\"dimensions\": [{\"name\": \"事实准确性\", \"score\": 90, \"weight\": 0.30, \"reason\": \"与工具返回一致\"}],\"sources\": [{\"toolName\": \"Read\", \"keyData\": \"文件X第10行\", \"citationType\": \"direct\"}]}\n"+
+					"   ---MESSAGE_END---\n"+
+					"   ```\n\n"+
+					"   评估维度（0-100分，权重总和1.0）：\n"+
+					"   | 维度 | 权重 | 核心标准 |\n"+
+					"   |------|------|----------|\n"+
+					"   | 事实准确性 | 30%% | 与工具返回一致；区分合理归纳 vs 错误解读 |\n"+
+					"   | 推理链完整性 | 25%% | 覆盖问题全部方面，无推理跳跃 |\n"+
+					"   | 多步一致性 | 20%% | 多轮迭代无矛盾，工具结果未被曲解 |\n"+
+					"   | 不确定性透明度 | 15%% | 推测性内容明确标注 |\n"+
+					"   | 来源可追溯性 | 10%% | 事实声明标注来源工具/文件 |\n\n"+
+					"   评分区间：\n"+
+					"   - 90-100：优秀，可直接采信\n"+
+					"   - 70-89：基本合格，关键结论需复核\n"+
+					"   - <70：不合格，存在明显事实或逻辑错误",
+				nextRule,
+			),
+		)
+		nextRule++
+	}
+
+	toolDiscovery := cb.getDiscoveryRule(nextRule)
+
+	var optionalBlock string
+	if len(optionalRules) > 0 {
+		optionalBlock = "\n\n" + strings.Join(optionalRules, "\n\n")
+	}
+
 	return fmt.Sprintf(
-		`# picoclaw 🦞 (%s)
-
-You are picoclaw, a helpful AI assistant.
-
-## Workspace
-Your workspace is at: %s
-- Memory: %s/memory/MEMORY.md
-- Daily Notes: %s/memory/YYYYMM/YYYYMMDD.md
-- Skills: %s/skills/{skill-name}/SKILL.md
-
-## Important Rules
-
-1. **ALWAYS use tools** - When you need to perform an action (schedule reminders, send messages, execute commands, etc.), you MUST call the appropriate tool. Do NOT just say you'll do it or pretend to do it.
-
-2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
-
-3. **Memory** - When interacting with me if something seems memorable, update %s/memory/MEMORY.md
-
-4. **Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.
-
-%s`,
-		version, workspacePath, workspacePath, workspacePath, workspacePath, workspacePath, toolDiscovery)
+		"# picoclaw 🦞 (%s)\n\n"+
+			"You are picoclaw, a helpful AI assistant.\n\n"+
+			"## Workspace\n"+
+			"Your workspace is at: %s\n"+
+			"- Memory: %s/memory/MEMORY.md\n"+
+			"- Daily Notes: %s/memory/YYYYMM/YYYYMMDD.md\n"+
+			"- Skills: %s/skills/{skill-name}/SKILL.md\n\n"+
+			"## Important Rules\n\n"+
+			"1. **ALWAYS use tools** - When you need to perform an action (schedule reminders, send messages, execute commands, etc.), you MUST call the appropriate tool. Do NOT just say you'll do it or pretend to do it.\n\n"+
+			"2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.\n\n"+
+			"3. **Memory** - When interacting with me if something seems memorable, update %s/memory/MEMORY.md\n\n"+
+			"4. **Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content."+
+			"%s\n\n"+
+			"%s",
+		version, workspacePath, workspacePath, workspacePath, workspacePath, workspacePath, optionalBlock, toolDiscovery)
 }
 
-func (cb *ContextBuilder) getDiscoveryRule() string {
+func (cb *ContextBuilder) getDiscoveryRule(startNum int) string {
 	if !cb.toolDiscoveryBM25 && !cb.toolDiscoveryRegex {
 		return ""
 	}
@@ -122,7 +179,8 @@ func (cb *ContextBuilder) getDiscoveryRule() string {
 	}
 
 	return fmt.Sprintf(
-		`5. **Tool Discovery** - Your visible tools are limited to save memory, but a vast hidden library exists. If you lack the right tool for a task, BEFORE giving up, you MUST search using the %s tool. Do not refuse a request unless the search returns nothing. Found tools will temporarily unlock for your next turn.`,
+		"%d. **Tool Discovery** - Your visible tools are limited to save memory, but a vast hidden library exists. If you lack the right tool for a task, BEFORE giving up, you MUST search using the %s tool. Do not refuse a request unless the search returns nothing. Found tools will temporarily unlock for your next turn.",
+		startNum,
 		strings.Join(toolNames, " or "),
 	)
 }

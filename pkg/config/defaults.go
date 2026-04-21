@@ -38,8 +38,10 @@ func DefaultConfig() *Config {
 					Enabled:       false,
 					MaxArgsLength: 300,
 				},
-				SplitOnMarker:  false,
-				StreamResponse: true,
+				SplitOnMarker:           false,
+				EnableActionSuggestions: true,
+				EnableDataQualityRule:   true,
+				StreamResponse:          true,
 			},
 		},
 		Session: SessionConfig{
