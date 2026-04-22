@@ -807,6 +807,16 @@ func (h *Handler) startGatewayLocked(initialStatus string, existingPid int) (int
 		refreshPicoTokensLocked(h.configPath)
 	}
 
+	// Ensure OpenResponses Channel is configured before starting gateway
+	orChanged, err := h.EnsureOpenResponsesChannel()
+	if err != nil {
+		logger.ErrorC("gateway", fmt.Sprintf("Warning: failed to ensure openresponses channel: %v", err))
+		// Non-fatal: gateway can still start without openresponses channel
+	}
+	if orChanged {
+		refreshOpenResponsesTokensLocked(h.configPath)
+	}
+
 	if err := cmd.Start(); err != nil {
 		return 0, fmt.Errorf("failed to start gateway: %w", err)
 	}

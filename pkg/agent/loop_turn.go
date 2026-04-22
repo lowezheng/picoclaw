@@ -142,11 +142,6 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 		activeProvider = ts.agent.LightProvider
 	}
 
-	// Lazy-init confidence evaluator
-	if al.confidenceEvaluator == nil {
-		al.initConfidenceEvaluator(ts.agent)
-	}
-
 	pendingMessages := append([]providers.Message(nil), ts.opts.InitialSteeringMessages...)
 	var finalContent string
 	var activeStreamer bus.Streamer

@@ -117,11 +117,9 @@ func (cb *ContextBuilder) getIdentity() string {
 			fmt.Sprintf(
 				"%d. **数据质量评估** — 输出含事实、数据或工具调用结果的内容时，必须在消息末尾追加 dataquality 评估。纯问候、闲聊、创意写作等无数据场景可省略。\n\n"+
 					"   输出格式（严格JSON，无其他内容，带有MESSAGE包裹）：\n"+
-					"   ```\n"+
 					"   ---MESSAGE_START---\n"+
 					"   {\"messageType\":\"dataquality\",\"overallScore\": 85,\"rating\": \"⭐⭐⭐⭐\",\"dimensions\": [{\"name\": \"事实准确性\", \"score\": 90, \"weight\": 0.30, \"reason\": \"与工具返回一致\"}],\"sources\": [{\"toolName\": \"Read\", \"keyData\": \"文件X第10行\", \"citationType\": \"direct\"}]}\n"+
 					"   ---MESSAGE_END---\n"+
-					"   ```\n\n"+
 					"   评估维度（0-100分，权重总和1.0）：\n"+
 					"   | 维度 | 权重 | 核心标准 |\n"+
 					"   |------|------|----------|\n"+

@@ -251,15 +251,6 @@ type ToolFeedbackConfig struct {
 	MaxArgsLength int  `json:"max_args_length" env:"PICOCLAW_AGENTS_DEFAULTS_TOOL_FEEDBACK_MAX_ARGS_LENGTH"`
 }
 
-// ConfidenceScoreConfig configures the LLM-based confidence scoring feature.
-type ConfidenceScoreConfig struct {
-	Enabled     bool     `json:"enabled"`
-	Channel     []string `json:"channel,omitempty"`
-	MaxTokens   int      `json:"max_tokens,omitempty"`
-	Temperature float64  `json:"temperature,omitempty"`
-	Timeout     string   `json:"timeout,omitempty"`
-}
-
 type AgentDefaults struct {
 	Workspace                 string             `json:"workspace"                        env:"PICOCLAW_AGENTS_DEFAULTS_WORKSPACE"`
 	RestrictToWorkspace       bool               `json:"restrict_to_workspace"            env:"PICOCLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
@@ -287,7 +278,6 @@ type AgentDefaults struct {
 	StreamResponse            bool               `json:"stream_response"                  env:"PICOCLAW_AGENTS_DEFAULTS_STREAM_RESPONSE"` // enable streaming response (default false)
 	ContextManager            string             `json:"context_manager,omitempty"        env:"PICOCLAW_AGENTS_DEFAULTS_CONTEXT_MANAGER"`
 	ContextManagerConfig      json.RawMessage    `json:"context_manager_config,omitempty" env:"PICOCLAW_AGENTS_DEFAULTS_CONTEXT_MANAGER_CONFIG"`
-	ConfidenceScore           ConfidenceScoreConfig `json:"confidence_score,omitempty"`
 }
 
 const DefaultMaxMediaSize = 20 * 1024 * 1024 // 20 MB
@@ -316,48 +306,6 @@ func (d *AgentDefaults) IsToolFeedbackEnabled() bool {
 // It prefers the new "model_name" field but falls back to "model" for backward compatibility.
 func (d *AgentDefaults) GetModelName() string {
 	return d.ModelName
-}
-
-// IsConfidenceScoreEnabled checks if confidence scoring is enabled for the given channel.
-func (d *AgentDefaults) IsConfidenceScoreEnabled(channel string) bool {
-	if !d.ConfidenceScore.Enabled {
-		return false
-	}
-	if len(d.ConfidenceScore.Channel) == 0 {
-		return channel == "openresponses"
-	}
-	for _, c := range d.ConfidenceScore.Channel {
-		if c == channel {
-			return true
-		}
-	}
-	return false
-}
-
-// GetConfidenceScoreMaxTokens returns the max tokens for confidence evaluation, or 512 if unset.
-func (d *AgentDefaults) GetConfidenceScoreMaxTokens() int {
-	if d.ConfidenceScore.MaxTokens > 0 {
-		return d.ConfidenceScore.MaxTokens
-	}
-	return 512
-}
-
-// GetConfidenceScoreTemperature returns the temperature for confidence evaluation, or 0.1 if unset.
-func (d *AgentDefaults) GetConfidenceScoreTemperature() float64 {
-	if d.ConfidenceScore.Temperature > 0 {
-		return d.ConfidenceScore.Temperature
-	}
-	return 0.1
-}
-
-// GetConfidenceScoreTimeout returns the timeout for confidence evaluation, or 60s if unset or invalid.
-func (d *AgentDefaults) GetConfidenceScoreTimeout() time.Duration {
-	if d.ConfidenceScore.Timeout != "" {
-		if dur, err := time.ParseDuration(d.ConfidenceScore.Timeout); err == nil {
-			return dur
-		}
-	}
-	return 60 * time.Second
 }
 
 // GroupTriggerConfig controls when the bot responds in group chats.
