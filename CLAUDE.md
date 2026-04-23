@@ -21,6 +21,9 @@ PicoClaw is an ultra-lightweight personal AI assistant written in Go. It support
 # Core binary for current platform (runs go generate first)
 make build
 
+# macOS: if you hit C dependency issues, force CGO-free build explicitly
+CGO_ENABLED=0 go build -tags goolm,stdjson -o build/picoclaw ./cmd/picoclaw
+
 # Web UI launcher (requires frontend build)
 make build-launcher
 
