@@ -80,21 +80,16 @@ toolLoop:
 						},
 					)
 
-					if al.cfg.Agents.Defaults.IsToolFeedbackEnabled() &&
-						ts.channel != "" &&
-						!ts.opts.SuppressToolFeedback {
-						argsJSON, _ := json.Marshal(toolArgs)
-						feedbackPreview := utils.Truncate(
-							string(argsJSON),
+					if shouldPublishToolFeedback(al.cfg, ts) {
+						toolFeedbackExplanation := toolFeedbackExplanationForToolCall(
+							exec.response,
+							tc,
+							messages,
 							al.cfg.Agents.Defaults.GetToolFeedbackMaxArgsLength(),
 						)
-						feedbackMsg := utils.FormatToolFeedbackMessage(toolName, feedbackPreview)
+						feedbackMsg := utils.FormatToolFeedbackMessage(toolName, toolFeedbackExplanation)
 						fbCtx, fbCancel := context.WithTimeout(turnCtx, 3*time.Second)
-						_ = al.bus.PublishOutbound(fbCtx, bus.OutboundMessage{
-							Channel: ts.channel,
-							ChatID:  ts.chatID,
-							Content: feedbackMsg,
-						})
+						_ = al.bus.PublishOutbound(fbCtx, outboundMessageForTurnWithKind(ts, feedbackMsg, messageKindToolFeedback))
 						fbCancel()
 					}
 
@@ -131,7 +126,16 @@ toolLoop:
 						outboundMedia := bus.OutboundMediaMessage{
 							Channel: ts.channel,
 							ChatID:  ts.chatID,
-							Parts:   parts,
+							Context: outboundContextFromInbound(
+								ts.opts.Dispatch.InboundContext,
+								ts.channel,
+								ts.chatID,
+								ts.opts.Dispatch.ReplyToMessageID(),
+							),
+							AgentID:    ts.agent.ID,
+							SessionKey: ts.sessionKey,
+							Scope:      outboundScopeFromSessionScope(ts.opts.Dispatch.SessionScope),
+							Parts:      parts,
 						}
 						if al.channelManager != nil && ts.channel != "" && !constants.IsInternalChannel(ts.channel) {
 							if err := al.channelManager.SendMedia(ctx, outboundMedia); err != nil {
@@ -353,16 +357,16 @@ toolLoop:
 			},
 		)
 
-		if al.cfg.Agents.Defaults.IsToolFeedbackEnabled() &&
-			ts.channel != "" &&
-			!ts.opts.SuppressToolFeedback {
-			feedbackPreview := utils.Truncate(
-				string(argsJSON),
+		if shouldPublishToolFeedback(al.cfg, ts) {
+			toolFeedbackExplanation := toolFeedbackExplanationForToolCall(
+				exec.response,
+				tc,
+				messages,
 				al.cfg.Agents.Defaults.GetToolFeedbackMaxArgsLength(),
 			)
-			feedbackMsg := utils.FormatToolFeedbackMessage(tc.Name, feedbackPreview)
+			feedbackMsg := utils.FormatToolFeedbackMessage(toolName, toolFeedbackExplanation)
 			fbCtx, fbCancel := context.WithTimeout(turnCtx, 3*time.Second)
-			_ = al.bus.PublishOutbound(fbCtx, outboundMessageForTurn(ts, feedbackMsg))
+			_ = al.bus.PublishOutbound(fbCtx, outboundMessageForTurnWithKind(ts, feedbackMsg, messageKindToolFeedback))
 			fbCancel()
 		}
 
@@ -589,6 +593,9 @@ toolLoop:
 				ts.chatID,
 				ts.opts.Dispatch.ReplyToMessageID(),
 			)
+			if outboundCtx.Raw == nil {
+				outboundCtx.Raw = make(map[string]string)
+			}
 			outboundCtx.Raw["message_kind"] = messageKindToolTiming
 			_ = al.bus.PublishOutbound(tmCtx, bus.OutboundMessage{
 				Channel:    ts.channel,

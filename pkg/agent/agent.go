@@ -116,6 +116,7 @@ const (
 	messageKindFunctionCall    = "function_call"
 	messageKindLLMTiming       = "llm_timing"
 	messageKindToolTiming      = "tool_timing"
+	messageKindToolFeedback    = "tool_feedback"
 	metadataKeyAccountID       = "account_id"
 	metadataKeyGuildID         = "guild_id"
 	metadataKeyTeamID          = "team_id"

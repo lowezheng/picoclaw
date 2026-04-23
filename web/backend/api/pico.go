@@ -233,6 +233,10 @@ func (h *Handler) handleRegenPicoToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	gateway.mu.Lock()
+	gateway.picoToken = token
+	gateway.mu.Unlock()
+
 	h.writePicoInfoResponse(w, r, cfg, nil)
 }
 
