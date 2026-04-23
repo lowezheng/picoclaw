@@ -6,9 +6,10 @@ import {
 } from "@/features/chat/state"
 
 export interface ChatAttachment {
-  type: "image" | "file"
+  type: "image" | "audio" | "video" | "file"
   url: string
   filename?: string
+  contentType?: string
 }
 
 export type AssistantMessageKind = "normal" | "thought"
@@ -27,6 +28,13 @@ export interface ChatMessage {
   }
 }
 
+export interface ContextUsage {
+  used_tokens: number
+  total_tokens: number
+  compress_at_tokens: number
+  used_percent: number
+}
+
 export type ConnectionState =
   | "disconnected"
   | "connecting"
@@ -39,6 +47,7 @@ export interface ChatStoreState {
   isTyping: boolean
   activeSessionId: string
   hasHydratedActiveSession: boolean
+  contextUsage?: ContextUsage
 }
 
 type ChatStorePatch = Partial<ChatStoreState>
@@ -52,6 +61,8 @@ const DEFAULT_CHAT_STATE: ChatStoreState = {
 }
 
 export const chatAtom = atom<ChatStoreState>(DEFAULT_CHAT_STATE)
+
+export const showThoughtsAtom = atom<boolean>(true)
 
 const store = getDefaultStore()
 

@@ -140,13 +140,12 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 	// Allow error messages through even when a streamer is active so that
 	// LLM failures are shown to the user instead of being silently dropped.
 	if st.hasStreamer.Load() &&
-		raw["message_kind"] != "thought" &&
 		raw["message_kind"] != "function_call" &&
 		raw["message_kind"] != "turn_end" &&
 		raw["message_kind"] != "tool_timing" &&
 		raw["message_kind"] != "llm_timing" &&
 		raw["message_kind"] != "error" {
-		logger.DebugCF("openresponses", "Send skipped (streamer active, not thought/fc/turn_end/timing)", map[string]any{
+		logger.DebugCF("openresponses", "Send skipped (streamer active, not fc/turn_end/timing)", map[string]any{
 			"conversation_id": conversationID,
 		})
 		return nil, nil

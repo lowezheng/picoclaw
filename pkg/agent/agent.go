@@ -15,9 +15,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/sipeed/picoclaw/pkg/agent/interfaces"
 	"github.com/sipeed/picoclaw/pkg/audio/asr"
 	"github.com/sipeed/picoclaw/pkg/bus"
-	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/commands"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/constants"
@@ -32,7 +32,7 @@ import (
 
 type AgentLoop struct {
 	// Core dependencies
-	bus      *bus.MessageBus
+	bus      interfaces.MessageBus
 	cfg      *config.Config
 	registry *AgentRegistry
 	state    *state.Manager
@@ -45,7 +45,7 @@ type AgentLoop struct {
 	running        atomic.Bool
 	contextManager ContextManager
 	fallback       *providers.FallbackChain
-	channelManager *channels.Manager
+	channelManager interfaces.ChannelManager
 	mediaStore     media.MediaStore
 	transcriber    asr.Transcriber
 	cmdRegistry    *commands.Registry
@@ -499,7 +499,8 @@ func (al *AgentLoop) runAgentLoop(
 		newTurnContext(opts.Dispatch.InboundContext, opts.Dispatch.RouteResult, opts.Dispatch.SessionScope),
 	)
 	ts := newTurnState(agent, opts, turnScope)
-	result, err := al.runTurn(ctx, ts)
+	pipeline := NewPipeline(al)
+	result, err := al.runTurn(ctx, ts, pipeline)
 	if err != nil {
 		return "", err
 	}
@@ -530,10 +531,11 @@ func (al *AgentLoop) runAgentLoop(
 				opts.Dispatch.ChatID(),
 				opts.Dispatch.ReplyToMessageID(),
 			),
-			AgentID:    agentID,
-			SessionKey: sessionKey,
-			Scope:      scope,
-			Content:    result.finalContent,
+			AgentID:      agentID,
+			SessionKey:   sessionKey,
+			Scope:        scope,
+			Content:      result.finalContent,
+			ContextUsage: computeContextUsage(agent, opts.Dispatch.SessionKey),
 		})
 	}
 

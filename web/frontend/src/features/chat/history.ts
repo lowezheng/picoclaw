@@ -1,28 +1,38 @@
 import { getSessionHistory } from "@/api/sessions"
 import { normalizeUnixTimestamp } from "@/features/chat/state"
-import { detectToolCall } from "@/lib/detect-tool-call"
 import type { ChatAttachment, ChatMessage } from "@/store/chat"
 
-function toChatAttachments(media?: string[]): ChatAttachment[] | undefined {
-  if (!media || media.length === 0) {
-    return undefined
-  }
+function toChatAttachments({
+  media,
+  attachments,
+}: {
+  media?: string[]
+  attachments?: {
+    type?: "image" | "audio" | "video" | "file"
+    url: string
+    filename?: string
+    content_type?: string
+  }[]
+}): ChatAttachment[] | undefined {
+  const normalizedAttachments = attachments
+    ?.filter((attachment) => attachment.url)
+    .map(
+      (attachment) =>
+        ({
+          type: attachment.type ?? "file",
+          url: attachment.url,
+          filename: attachment.filename,
+          contentType: attachment.content_type,
+        }) satisfies ChatAttachment,
+    )
 
-  const attachments = media
+  const legacyMediaAttachments = (media ?? [])
     .filter((item) => item.startsWith("data:image/"))
     .map((url) => ({ type: "image" as const, url }))
 
-  return attachments.length > 0 ? attachments : undefined
-}
+  const merged = [...(normalizedAttachments ?? []), ...legacyMediaAttachments]
 
-function inferToolCallFromContent(content: string): ChatMessage["toolCall"] {
-  const detected = detectToolCall(content)
-  if (!detected) return undefined
-  return {
-    callId: "",
-    name: detected.toolName,
-    arguments: detected.output,
-  }
+  return merged.length > 0 ? merged : undefined
 }
 
 export async function loadSessionMessages(
@@ -31,22 +41,17 @@ export async function loadSessionMessages(
   const detail = await getSessionHistory(sessionId)
   const fallbackTime = detail.updated
 
-  return detail.messages.map((message, index) => {
-    const toolCall =
-      message.role === "assistant"
-        ? inferToolCallFromContent(message.content)
-        : undefined
-
-    return {
-      id: `hist-${index}-${Date.now()}`,
-      role: message.role,
-      content: message.content,
-      kind: message.role === "assistant" ? "normal" : undefined,
-      attachments: toChatAttachments(message.media),
-      timestamp: fallbackTime,
-      ...(toolCall && { toolCall }),
-    }
-  })
+  return detail.messages.map((message, index) => ({
+    id: `hist-${index}-${Date.now()}`,
+    role: message.role,
+    content: message.content,
+    kind: message.role === "assistant" ? "normal" : undefined,
+    attachments: toChatAttachments({
+      media: message.media,
+      attachments: message.attachments,
+    }),
+    timestamp: fallbackTime,
+  }))
 }
 
 function normalizeMessageTimestamp(timestamp: number | string): string {
@@ -65,7 +70,10 @@ function normalizeMessageTimestamp(timestamp: number | string): string {
 
 function messageSignature(message: ChatMessage): string {
   const attachmentSignature = (message.attachments ?? [])
-    .map((attachment) => `${attachment.type}\u0001${attachment.url}`)
+    .map(
+      (attachment) =>
+        `${attachment.type}\u0001${attachment.url}\u0001${attachment.filename ?? ""}`,
+    )
     .join("\u0002")
 
   return `${message.role}\u0000${message.content}\u0000${normalizeMessageTimestamp(

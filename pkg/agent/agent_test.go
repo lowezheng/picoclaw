@@ -128,7 +128,7 @@ func useTestSideQuestionProvider(al *AgentLoop, provider providers.LLMProvider) 
 	al.providerFactory = func(mc *config.ModelConfig) (providers.LLMProvider, string, error) {
 		model := provider.GetDefaultModel()
 		if mc != nil {
-			if _, modelID := providers.ExtractProtocol(mc.Model); modelID != "" {
+			if _, modelID := providers.ExtractProtocol(mc); modelID != "" {
 				model = modelID
 			}
 		}
@@ -1050,6 +1050,9 @@ func TestProcessMessage_MediaToolHandledSkipsFollowUpLLMAndFinalText(t *testing.
 	last := history[len(history)-1]
 	if last.Role != "assistant" || last.Content != "Requested output delivered via tool attachment." {
 		t.Fatalf("expected handled assistant summary in history, got %+v", last)
+	}
+	if len(last.Attachments) != 1 {
+		t.Fatalf("expected handled assistant summary attachments in history, got %+v", last.Attachments)
 	}
 }
 
@@ -2266,6 +2269,75 @@ func TestProcessMessage_CommandOutcomes(t *testing.T) {
 	}
 	if provider.calls != 2 {
 		t.Fatalf("LLM should be called for passthrough /new command, calls=%d", provider.calls)
+	}
+}
+
+func TestProcessMessage_MCPCommandsHandledWithoutLLMCall(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "agent-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	deferred := true
+	cfg := &config.Config{
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				Workspace:         tmpDir,
+				ModelName:         "test-model",
+				MaxTokens:         4096,
+				MaxToolIterations: 10,
+			},
+		},
+		Session: config.SessionConfig{
+			Dimensions: []string{"chat"},
+		},
+		Tools: config.ToolsConfig{
+			MCP: config.MCPConfig{
+				ToolConfig: config.ToolConfig{Enabled: true},
+				Discovery:  config.ToolDiscoveryConfig{Enabled: true},
+				Servers: map[string]config.MCPServerConfig{
+					"github": {
+						Enabled:  true,
+						Deferred: &deferred,
+					},
+				},
+			},
+		},
+	}
+
+	msgBus := bus.NewMessageBus()
+	provider := &countingMockProvider{response: "LLM reply"}
+	al := NewAgentLoop(cfg, msgBus, provider)
+	helper := testHelper{al: al}
+
+	baseContext := bus.InboundContext{
+		Channel:  "whatsapp",
+		ChatID:   "chat1",
+		ChatType: "direct",
+		SenderID: "user1",
+	}
+
+	listResp := helper.executeAndGetResponse(t, context.Background(), bus.InboundMessage{
+		Context: baseContext,
+		Content: "/list mcp",
+	})
+	if !strings.Contains(listResp, "- `github`") || !strings.Contains(listResp, "Deferred: yes") {
+		t.Fatalf("unexpected /list mcp reply: %q", listResp)
+	}
+	if provider.calls != 0 {
+		t.Fatalf("LLM should not be called for /list mcp, calls=%d", provider.calls)
+	}
+
+	showResp := helper.executeAndGetResponse(t, context.Background(), bus.InboundMessage{
+		Context: baseContext,
+		Content: "/show mcp github",
+	})
+	if showResp != "MCP server 'github' is configured but not connected" {
+		t.Fatalf("unexpected /show mcp reply: %q", showResp)
+	}
+	if provider.calls != 0 {
+		t.Fatalf("LLM should not be called for /show mcp, calls=%d", provider.calls)
 	}
 }
 
