@@ -37,7 +37,7 @@ type (
 	ReasoningDetail        = protocoltypes.ReasoningDetail
 )
 
-const DefaultRequestTimeout = 120 * time.Second
+const DefaultRequestTimeout = 180 * time.Second
 
 // NewHTTPClient creates an *http.Client with an optional proxy and the default timeout.
 func NewHTTPClient(proxy string) *http.Client {
@@ -48,7 +48,11 @@ func NewHTTPClient(proxy string) *http.Client {
 		tr = &http.Transport{}
 	}
 	tr.TLSHandshakeTimeout = 10 * time.Second
-	tr.ResponseHeaderTimeout = 60 * time.Second
+	// ResponseHeaderTimeout is intentionally left at zero (disabled).
+	// LLM APIs may spend minutes processing large prompts before sending
+	// response headers; a fixed header timeout breaks both streaming and
+	// non-streaming paths. The overall http.Client.Timeout governs the
+	// entire request lifecycle and is configurable per provider.
 	tr.ExpectContinueTimeout = 1 * time.Second
 	tr.IdleConnTimeout = 90 * time.Second
 	tr.MaxIdleConns = 100
