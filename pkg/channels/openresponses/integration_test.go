@@ -168,7 +168,7 @@ func readSSE(t *testing.T, body io.Reader, timeout time.Duration) []sseEvent {
 // -- Auth & validation --
 
 func TestIntegration_AuthFailure(t *testing.T) {
-	resp := doPost(t, "", `{"input":"hello"}`, false)
+	resp := doPost(t, "/chat", `{"input":"hello"}`, false)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusUnauthorized {
@@ -184,7 +184,7 @@ func TestIntegration_AuthFailure(t *testing.T) {
 }
 
 func TestIntegration_EmptyInput(t *testing.T) {
-	resp := doPost(t, "", `{"input":""}`, true)
+	resp := doPost(t, "/chat", `{"input":""}`, true)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusBadRequest {
@@ -200,7 +200,7 @@ func TestIntegration_EmptyInput(t *testing.T) {
 }
 
 func TestIntegration_MethodNotAllowed(t *testing.T) {
-	resp := doGet(t, "")
+	resp := doGet(t, "/chat")
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusMethodNotAllowed {
@@ -213,7 +213,7 @@ func TestIntegration_MethodNotAllowed(t *testing.T) {
 func TestIntegration_NonStreaming_Text(t *testing.T) {
 	convID := "conv_integ_text_" + time.Now().Format("150405")
 	body := `{"input":"Say exactly: Hello from integration test","conversation_id":"` + convID + `"}`
-	resp := doPost(t, "", body, true)
+	resp := doPost(t, "/chat", body, true)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -268,7 +268,7 @@ func TestIntegration_NonStreaming_MultiPartInput(t *testing.T) {
 		t.Fatalf("marshal input: %v", err)
 	}
 	body := `{"input":` + string(inputJSON) + `,"conversation_id":"` + convID + `"}`
-	resp := doPost(t, "", body, true)
+	resp := doPost(t, "/chat", body, true)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -314,7 +314,7 @@ func TestIntegration_NonStreaming_MultiPartInput(t *testing.T) {
 func TestIntegration_Streaming_Text(t *testing.T) {
 	convID := "conv_integ_stream_" + time.Now().Format("150405")
 	body := `{"input":"Say exactly: Hello from SSE stream","stream":true,"conversation_id":"` + convID + `"}`
-	resp := doPost(t, "", body, true)
+	resp := doPost(t, "/chat", body, true)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -377,7 +377,7 @@ func TestIntegration_Streaming_Text(t *testing.T) {
 func TestIntegration_Streaming_EventSequence(t *testing.T) {
 	convID := "conv_integ_seq_" + time.Now().Format("150405")
 	body := `{"input":"Reply with exactly the word: OK","stream":true,"conversation_id":"` + convID + `"}`
-	resp := doPost(t, "", body, true)
+	resp := doPost(t, "/chat", body, true)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {

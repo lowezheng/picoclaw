@@ -13,9 +13,12 @@ import (
 func (c *OpenResponsesChannel) WebhookPath() string {
 	path := c.cfg.EndpointPath
 	if path == "" {
-		path = "/v1/responses"
+		path = "/v1/responses/"
 	}
-	return strings.TrimSuffix(path, "/")
+	if !strings.HasSuffix(path, "/") {
+		path += "/"
+	}
+	return path
 }
 
 func (c *OpenResponsesChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -24,14 +27,15 @@ func (c *OpenResponsesChannel) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	base := c.WebhookPath()                  // "/v1/responses"
-	baseSlash := base + "/"                  // "/v1/responses/"
-	sessionsBase := baseSlash + "sessions"     // "/v1/responses/sessions"
-	sessionsBaseSlash := sessionsBase + "/"    // "/v1/responses/sessions/"
+	base := c.WebhookPath()                      // "/v1/responses/"
+	baseNoSlash := strings.TrimSuffix(base, "/") // "/v1/responses"
+	chatPath := baseNoSlash + "/chat"            // "/v1/responses/chat"
+	sessionsBase := baseNoSlash + "/sessions"    // "/v1/responses/sessions"
+	sessionsBaseSlash := sessionsBase + "/"      // "/v1/responses/sessions/"
 	path := r.URL.Path
 
 	switch {
-	case path == base || path == baseSlash:
+	case path == chatPath:
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, "invalid_request", "", "Method not allowed")
 			return

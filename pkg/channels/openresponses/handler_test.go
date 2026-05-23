@@ -15,13 +15,13 @@ func TestWebhookPath(t *testing.T) {
 	ch := &OpenResponsesChannel{
 		cfg: &config.OpenResponsesSettings{EndpointPath: "/v1/responses"},
 	}
-	if got := ch.WebhookPath(); got != "/v1/responses" {
-		t.Errorf("WebhookPath() = %q, want %q", got, "/v1/responses")
+	if got := ch.WebhookPath(); got != "/v1/responses/" {
+		t.Errorf("WebhookPath() = %q, want %q", got, "/v1/responses/")
 	}
 
 	ch.cfg.EndpointPath = "/custom/"
-	if got := ch.WebhookPath(); got != "/custom" {
-		t.Errorf("WebhookPath() = %q, want %q", got, "/custom")
+	if got := ch.WebhookPath(); got != "/custom/" {
+		t.Errorf("WebhookPath() = %q, want %q", got, "/custom/")
 	}
 }
 
@@ -32,7 +32,7 @@ func TestServeHTTP_ChannelNotRunning(t *testing.T) {
 	}
 	// Not running
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses/chat", nil)
 	ch.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusServiceUnavailable {
@@ -50,7 +50,7 @@ func TestServeHTTP_ChannelNotRunning(t *testing.T) {
 func TestServeHTTP_AuthFailure(t *testing.T) {
 	ch := newTestChannel()
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses/chat", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	ch.ServeHTTP(rr, req)
 
@@ -62,7 +62,7 @@ func TestServeHTTP_AuthFailure(t *testing.T) {
 func TestServeHTTP_EmptyInput(t *testing.T) {
 	ch := newTestChannel()
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"input":""}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses/chat", strings.NewReader(`{"input":""}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer test-token")
 	ch.ServeHTTP(rr, req)
@@ -75,7 +75,7 @@ func TestServeHTTP_EmptyInput(t *testing.T) {
 func TestServeHTTP_InvalidContentType(t *testing.T) {
 	ch := newTestChannel()
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"input":"hello"}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses/chat", strings.NewReader(`{"input":"hello"}`))
 	req.Header.Set("Authorization", "Bearer test-token")
 	ch.ServeHTTP(rr, req)
 
@@ -99,7 +99,7 @@ func TestServeHTTP_404(t *testing.T) {
 func TestServeHTTP_MethodNotAllowed(t *testing.T) {
 	ch := newTestChannel()
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/chat", nil)
 	req.Header.Set("Authorization", "Bearer test-token")
 	ch.ServeHTTP(rr, req)
 
@@ -280,7 +280,7 @@ func TestServeStream_TextOnly(t *testing.T) {
 	stream := newPendingStream()
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses/chat", nil)
 
 	go func() {
 		stream.push(streamEvent{kind: eventKindTextDelta, content: "Hello"})
@@ -338,7 +338,7 @@ func TestServeStream_ReasoningAfterText(t *testing.T) {
 	stream := newPendingStream()
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses/chat", nil)
 
 	go func() {
 		stream.push(streamEvent{kind: eventKindTextDelta, content: "Hello"})
@@ -374,7 +374,7 @@ func TestServeStream_FunctionCallSequence(t *testing.T) {
 	stream := newPendingStream()
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses/chat", nil)
 
 	go func() {
 		stream.push(streamEvent{kind: eventKindTextDelta, content: "Let me"})
@@ -426,7 +426,7 @@ func TestServeStream_ImageEvent(t *testing.T) {
 	stream := newPendingStream()
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses/chat", nil)
 
 	go func() {
 		stream.push(streamEvent{kind: eventKindImage, imageURL: "data:image/png;base64,abc"})
@@ -461,7 +461,7 @@ func TestServeJSON_TextDeltaAccumulation(t *testing.T) {
 	}()
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses/chat", nil)
 	ch.serveJSON(rr, req, stream, "conv_json", CreateResponseRequest{})
 
 	if rr.Code != http.StatusOK {
@@ -494,7 +494,7 @@ func TestServeJSON_FunctionCallOutput(t *testing.T) {
 	}()
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses/chat", nil)
 	ch.serveJSON(rr, req, stream, "conv_fc", CreateResponseRequest{})
 
 	var resp Response
