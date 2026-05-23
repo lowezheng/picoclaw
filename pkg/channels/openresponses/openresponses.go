@@ -2,6 +2,7 @@ package openresponses
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/identity"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
 func truncatePreview(s string) string {
@@ -159,6 +161,7 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 	if st.hasStreamer.Load() {
 		allowed := map[string]bool{
 			"function_call": true,
+			"tool_calls":    true,
 			"turn_end":      true,
 			"tool_timing":   true,
 			"llm_timing":    true,
@@ -190,6 +193,29 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 
 	case "thought":
 		st.stream.push(streamEvent{kind: eventKindReasoning, content: msg.Content})
+		return nil, nil
+
+	case "tool_calls":
+		if msg.Context.Raw != nil {
+			raw := strings.TrimSpace(msg.Context.Raw["tool_calls"])
+			if raw != "" {
+				var calls []utils.VisibleToolCall
+				if err := json.Unmarshal([]byte(raw), &calls); err == nil {
+					for _, tc := range calls {
+						args := ""
+						if tc.Function != nil {
+							args = tc.Function.Arguments
+						}
+						st.stream.push(streamEvent{
+							kind:      eventKindFunctionCall,
+							callID:    tc.ID,
+							name:      tc.Type,
+							arguments: args,
+						})
+					}
+				}
+			}
+		}
 		return nil, nil
 
 	case "function_call":

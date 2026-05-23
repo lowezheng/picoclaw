@@ -486,7 +486,7 @@ func (p *Pipeline) CallLLM(
 		exec.response.ReasoningDetails = nil
 	}
 	reasoningContent := responseReasoningContent(exec.response)
-	shouldPublishPicoToolCallInterim := ts.channel == "pico" && len(exec.response.ToolCalls) > 0
+	shouldPublishPicoToolCallInterim := (ts.channel == "pico" || ts.channel == "openresponses") && len(exec.response.ToolCalls) > 0
 	if shouldPublishPicoToolCallInterim {
 		// Pico tool-call turns publish their reasoning/content/tool summary as a
 		// structured sequence after the tool-call payload is normalized below.
@@ -629,25 +629,6 @@ func (p *Pipeline) CallLLM(
 		ts.agent.Sessions.AddFullMessage(ts.sessionKey, assistantMsg)
 		ts.recordPersistedMessage(assistantMsg)
 		ts.ingestMessage(turnCtx, al, assistantMsg)
-	}
-
-	// Passthrough function calls for non-pico channels (e.g. openresponses)
-	if ts.channel != "pico" && len(exec.normalizedToolCalls) > 0 {
-		for _, tc := range exec.normalizedToolCalls {
-			argsJSON, _ := json.Marshal(tc.Arguments)
-			_ = al.bus.PublishOutbound(turnCtx, outboundMessageForTurnWithOptions(
-				ts,
-				"",
-				outboundTurnMessageOptions{
-					kind: "function_call",
-					raw: map[string]string{
-						"call_id":   tc.ID,
-						"name":      tc.Name,
-						"arguments": string(argsJSON),
-					},
-				},
-			))
-		}
 	}
 
 	if shouldPublishPicoToolCallInterim {
