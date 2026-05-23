@@ -3,6 +3,7 @@ package openresponses
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // -- Request types --
@@ -167,4 +168,12 @@ type sessionListItem struct {
 	MessageCount int    `json:"message_count"`
 	Created      string `json:"created"`
 	Updated      string `json:"updated"`
+}
+
+type sessionRegistryEntry struct {
+	id        string
+	createdAt time.Time
+	updatedAt time.Time
+	msgCount  int
+	preview   string
 }

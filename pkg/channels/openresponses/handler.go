@@ -15,10 +15,7 @@ func (c *OpenResponsesChannel) WebhookPath() string {
 	if path == "" {
 		path = "/v1/responses"
 	}
-	if !strings.HasSuffix(path, "/") {
-		path += "/"
-	}
-	return path
+	return strings.TrimSuffix(path, "/")
 }
 
 func (c *OpenResponsesChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -27,25 +24,27 @@ func (c *OpenResponsesChannel) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	base := c.WebhookPath()
-	sessionsBase := base + "sessions"
+	base := c.WebhookPath()                  // "/v1/responses"
+	baseSlash := base + "/"                  // "/v1/responses/"
+	sessionsBase := baseSlash + "sessions"     // "/v1/responses/sessions"
+	sessionsBaseSlash := sessionsBase + "/"    // "/v1/responses/sessions/"
 	path := r.URL.Path
 
 	switch {
-	case path == base || path == strings.TrimSuffix(base, "/"):
+	case path == base || path == baseSlash:
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, "invalid_request", "", "Method not allowed")
 			return
 		}
 		c.serveCreateResponse(w, r)
-	case path == sessionsBase || path == sessionsBase+"/":
+	case path == sessionsBase || path == sessionsBaseSlash:
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusMethodNotAllowed, "invalid_request", "", "Method not allowed")
 			return
 		}
 		c.handleListSessions(w, r)
-	case strings.HasPrefix(path, sessionsBase+"/"):
-		id := strings.TrimPrefix(path, sessionsBase+"/")
+	case strings.HasPrefix(path, sessionsBaseSlash):
+		id := strings.TrimPrefix(path, sessionsBaseSlash)
 		c.handleSessionDetail(w, r, id)
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "", "Endpoint not found")
@@ -324,6 +323,23 @@ func (c *OpenResponsesChannel) buildResponse(stream *pendingStream, conversation
 				hasActiveReasoningItem = false
 			}
 		}
+	}
+
+	// Flush any remaining text that was streamed as deltas but never finalized
+	// with a turn_end (e.g. if the stream was closed prematurely).
+	if hasActiveTextItem {
+		item := ResponseItem{
+			ID:      fmt.Sprintf("%s_%d", msgID, msgSeq),
+			Type:    "message",
+			Status:  "completed",
+			Role:    "assistant",
+			Content: []ContentOutput{{Type: "output_text", Text: textBuf}},
+		}
+		outputItems = append(outputItems, item)
+		msgSeq++
+	}
+	if hasActiveReasoningItem {
+		hasActiveReasoningItem = false
 	}
 
 	if len(outputItems) == 0 {

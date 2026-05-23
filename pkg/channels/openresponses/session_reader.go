@@ -2,6 +2,8 @@ package openresponses
 
 import (
 	"path/filepath"
+	"sort"
+	"time"
 
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/session"
@@ -15,18 +17,63 @@ func (c *OpenResponsesChannel) sessionsDir() string {
 }
 
 func (c *OpenResponsesChannel) listSessions(offset, limit int) []sessionListItem {
-	// TODO: implement using pkg/session session store
-	return []sessionListItem{}
+	c.sessionRegMu.RLock()
+	defer c.sessionRegMu.RUnlock()
+
+	items := make([]sessionListItem, 0, len(c.sessionRegistry))
+	for _, entry := range c.sessionRegistry {
+		items = append(items, sessionListItem{
+			ID:           entry.id,
+			Title:        entry.id,
+			Preview:      entry.preview,
+			MessageCount: entry.msgCount,
+			Created:      entry.createdAt.Format(time.RFC3339),
+			Updated:      entry.updatedAt.Format(time.RFC3339),
+		})
+	}
+
+	// Sort by updatedAt desc
+	sort.Slice(items, func(i, j int) bool {
+		ti, _ := time.Parse(time.RFC3339, items[i].Updated)
+		tj, _ := time.Parse(time.RFC3339, items[j].Updated)
+		return ti.After(tj)
+	})
+
+	if offset > len(items) {
+		return []sessionListItem{}
+	}
+	items = items[offset:]
+	if limit > 0 && limit < len(items) {
+		items = items[:limit]
+	}
+	return items
 }
 
 func (c *OpenResponsesChannel) getSession(id string) map[string]any {
-	// TODO: implement using pkg/session session store
-	return nil
+	c.sessionRegMu.RLock()
+	entry, ok := c.sessionRegistry[id]
+	c.sessionRegMu.RUnlock()
+	if !ok {
+		return nil
+	}
+	return map[string]any{
+		"id":            entry.id,
+		"title":         entry.id,
+		"preview":       entry.preview,
+		"message_count": entry.msgCount,
+		"created":       entry.createdAt.Format(time.RFC3339),
+		"updated":       entry.updatedAt.Format(time.RFC3339),
+	}
 }
 
 func (c *OpenResponsesChannel) deleteSession(id string) bool {
-	// TODO: implement using pkg/session session store
-	return false
+	c.sessionRegMu.Lock()
+	defer c.sessionRegMu.Unlock()
+	if _, ok := c.sessionRegistry[id]; !ok {
+		return false
+	}
+	delete(c.sessionRegistry, id)
+	return true
 }
 
 // visibleSessionMessages filters raw session messages to only those visible to the user.

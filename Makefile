@@ -415,7 +415,7 @@ check: deps fmt vet test lint-docs
 
 ## run: Build and run picoclaw
 run: build
-	@$(BUILD_DIR)/$(BINARY_NAME) $(ARGS)
+	@$(BUILD_DIR)/$(BINARY_NAME) gateway -d $(ARGS)
 
 ## docker-build: Build Docker image (minimal Alpine-based)
 docker-build:
