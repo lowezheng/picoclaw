@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/sipeed/picoclaw/pkg/logger"
 )
 
 func (c *OpenResponsesChannel) WebhookPath() string {
@@ -354,6 +353,10 @@ func (c *OpenResponsesChannel) buildResponse(stream *pendingStream, conversation
 func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Request, stream *pendingStream, conversationID string, req CreateResponseRequest) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
+		// Clear SSE headers before downgrading to JSON
+		w.Header().Del("Content-Type")
+		w.Header().Del("Cache-Control")
+		w.Header().Del("Connection")
 		c.serveJSON(w, r, stream, conversationID, req)
 		return
 	}
@@ -421,9 +424,8 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 				return
 			}
 
-			if rc, err := http.NewResponseController(w); err == nil {
-				rc.SetWriteDeadline(time.Now().Add(30 * time.Second))
-			}
+			rc := http.NewResponseController(w)
+			rc.SetWriteDeadline(time.Now().Add(30 * time.Second))
 
 			switch ev.kind {
 			case eventKindTextDelta:

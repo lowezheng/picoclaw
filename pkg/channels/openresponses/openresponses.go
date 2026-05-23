@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 
-	"github.com/google/uuid"
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/config"
@@ -112,7 +110,7 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 	st, ok := c.convs[msg.ChatID]
 	c.convMu.RUnlock()
 	if !ok {
-		logger.WarnC("openresponses", "No active conversation for chatID", map[string]any{
+		logger.WarnCF("openresponses", "No active conversation for chatID", map[string]any{
 			"chat_id": msg.ChatID,
 		})
 		return nil, nil
@@ -168,6 +166,17 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 		return nil, nil
 
 	default:
+		// Non-streaming: outbound_kind="final" triggers turn end
+		if msg.Context.Raw != nil && msg.Context.Raw["outbound_kind"] == "final" {
+			st.stream.push(streamEvent{kind: eventKindText, content: msg.Content})
+			st.stream.push(streamEvent{kind: eventKindTurnEnd})
+			c.convMu.Lock()
+			delete(c.convs, msg.ChatID)
+			c.convMu.Unlock()
+			close(st.done)
+			st.stream.close()
+			return nil, nil
+		}
 		st.stream.push(streamEvent{kind: eventKindText, content: msg.Content})
 		return nil, nil
 	}
