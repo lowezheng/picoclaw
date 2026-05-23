@@ -630,6 +630,26 @@ func (p *Pipeline) CallLLM(
 		ts.recordPersistedMessage(assistantMsg)
 		ts.ingestMessage(turnCtx, al, assistantMsg)
 	}
+
+	// Passthrough function calls for non-pico channels (e.g. openresponses)
+	if ts.channel != "pico" && len(exec.normalizedToolCalls) > 0 {
+		for _, tc := range exec.normalizedToolCalls {
+			argsJSON, _ := json.Marshal(tc.Arguments)
+			_ = al.bus.PublishOutbound(turnCtx, outboundMessageForTurnWithOptions(
+				ts,
+				"",
+				outboundTurnMessageOptions{
+					kind: "function_call",
+					raw: map[string]string{
+						"call_id":   tc.ID,
+						"name":      tc.Name,
+						"arguments": string(argsJSON),
+					},
+				},
+			))
+		}
+	}
+
 	if shouldPublishPicoToolCallInterim {
 		al.publishPicoToolCallInterim(
 			turnCtx,
