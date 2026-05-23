@@ -415,6 +415,69 @@ func TestIntegration_Streaming_EventSequence(t *testing.T) {
 	}
 }
 
+func TestIntegration_Streaming_MultiPartInput(t *testing.T) {
+	convID := "conv_integ_stream_multi_" + time.Now().Format("150405")
+	pdfDataURL := loadTestPDFDataURL(t)
+	input := []map[string]any{
+		{"type": "input_text", "content": "请总结上传的PDF文件中的关键信息，用一句话概括"},
+		{"type": "input_file", "content": pdfDataURL},
+	}
+	inputJSON, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("marshal input: %v", err)
+	}
+	body := `{"input":` + string(inputJSON) + `,"stream":true,"conversation_id":"` + convID + `"}`
+	resp := doPost(t, "/chat", body, true)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyStr := readBody(t, resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, bodyStr)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("expected text/event-stream, got %q", ct)
+	}
+
+	events := readSSE(t, resp.Body, 30*time.Second)
+	if len(events) == 0 {
+		t.Fatal("expected SSE events, got none")
+	}
+
+	// Must start with response.in_progress
+	if events[0].Event != "response.in_progress" {
+		t.Errorf("first event should be response.in_progress, got %q", events[0].Event)
+	}
+
+	// Must end with response.completed and [DONE]
+	if len(events) < 2 {
+		t.Fatal("expected at least 2 events")
+	}
+	secondLast := events[len(events)-2]
+	last := events[len(events)-1]
+	if secondLast.Event != "response.completed" {
+		t.Errorf("expected response.completed as second-last, got %q", secondLast.Event)
+	}
+	if last.Data != "[DONE]" {
+		t.Errorf("expected [DONE] as last, got event=%q data=%q", last.Event, last.Data)
+	}
+
+	// Collect all text deltas
+	var allText strings.Builder
+	for _, ev := range events {
+		if ev.Event == "response.output_text.delta" {
+			var payload map[string]any
+			_ = json.Unmarshal([]byte(ev.Data), &payload)
+			if d, ok := payload["delta"].(string); ok {
+				allText.WriteString(d)
+			}
+		}
+	}
+	lower := strings.ToLower(allText.String())
+	if !strings.Contains(lower, "sky") && !strings.Contains(lower, "blue") && !strings.Contains(lower, "water") && !strings.Contains(lower, "boil") && !strings.Contains(lower, "openresponses") {
+		t.Errorf("response does not reference PDF content; got: %q", allText.String())
+	}
+}
+
 // -- Session API --
 
 func TestIntegration_SessionList(t *testing.T) {
