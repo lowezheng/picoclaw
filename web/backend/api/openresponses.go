@@ -10,7 +10,11 @@ import (
 
 // registerOpenResponsesRoutes binds OpenResponses proxy endpoints to the ServeMux.
 func (h *Handler) registerOpenResponsesRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /v1/responses/chat", h.handleOpenResponsesChatProxy())
+	proxy := h.openResponsesProxyHandler()
+	mux.Handle("POST /v1/responses/chat", proxy)
+	mux.Handle("GET /v1/responses/sessions", proxy)
+	mux.Handle("GET /v1/responses/sessions/{id}", proxy)
+	mux.Handle("DELETE /v1/responses/sessions/{id}", proxy)
 }
 
 // decodeOpenResponsesSettings extracts the OpenResponses channel config and token.
@@ -48,9 +52,10 @@ func (h *Handler) createOpenResponsesProxy(token string) *httputil.ReverseProxy 
 	}
 }
 
-// handleOpenResponsesChatProxy forwards OpenResponses chat requests to the gateway.
-func (h *Handler) handleOpenResponsesChatProxy() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+// openResponsesProxyHandler returns an http.Handler that forwards OpenResponses
+// requests to the gateway.
+func (h *Handler) openResponsesProxyHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !h.gatewayAvailableForProxy() {
 			logger.Warnf("Gateway not available for OpenResponses proxy")
 			http.Error(w, "Gateway not available", http.StatusServiceUnavailable)
@@ -71,5 +76,5 @@ func (h *Handler) handleOpenResponsesChatProxy() http.HandlerFunc {
 		}
 
 		h.createOpenResponsesProxy(orCfg.Token.String()).ServeHTTP(w, r)
-	}
+	})
 }
