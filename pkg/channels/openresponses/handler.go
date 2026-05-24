@@ -29,13 +29,15 @@ func (c *OpenResponsesChannel) ServeHTTP(w http.ResponseWriter, r *http.Request)
 
 	base := c.WebhookPath()
 	baseNoSlash := strings.TrimSuffix(base, "/")
-	chatPath := baseNoSlash + "/chat"
+	//todo 我增加两种url都支持
+	chatPath1 := baseNoSlash
+	chatPath2 := baseNoSlash + "/chat"
 	sessionsBase := baseNoSlash + "/sessions"
 	sessionsBaseSlash := sessionsBase + "/"
 	path := r.URL.Path
 
 	switch {
-	case path == chatPath:
+	case path == chatPath1 || path == chatPath2:
 		if r.Method != http.MethodPost {
 			writeError(w, http.StatusMethodNotAllowed, "invalid_request", "", "Method not allowed")
 			return

@@ -11,6 +11,7 @@ import (
 // registerOpenResponsesRoutes binds OpenResponses proxy endpoints to the ServeMux.
 func (h *Handler) registerOpenResponsesRoutes(mux *http.ServeMux) {
 	proxy := h.openResponsesProxyHandler()
+	mux.Handle("POST /v1/responses", proxy)
 	mux.Handle("POST /v1/responses/chat", proxy)
 	mux.Handle("GET /v1/responses/sessions", proxy)
 	mux.Handle("GET /v1/responses/sessions/{id}", proxy)

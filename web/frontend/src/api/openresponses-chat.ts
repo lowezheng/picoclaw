@@ -97,7 +97,7 @@ export async function* streamOpenResponses(
   req: CreateResponseRequest,
   abortSignal?: AbortSignal,
 ): AsyncGenerator<SSEEvent, void, unknown> {
-  const res = await launcherFetch("/v1/responses/chat", {
+  const res = await launcherFetch("/v1/responses", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -152,7 +152,7 @@ export async function* streamOpenResponses(
 export async function sendOpenResponsesNonStreaming(
   req: CreateResponseRequest,
 ): Promise<{ content: string; toolCalls?: { id: string; name: string; arguments: string }[] }> {
-  const res = await launcherFetch("/v1/responses/chat", {
+  const res = await launcherFetch("/v1/responses", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
