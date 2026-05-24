@@ -79,10 +79,15 @@ func (p *Pipeline) Finalize(
 	}
 
 	contextUsage := computeContextUsage(ts.agent, ts.sessionKey)
+	// Capture whether this turn ever used configured streaming before
+	// finalizeConfiguredStreamingLLM clears the publisher.
+	hadStreaming := exec.streamingPublisher != nil || exec.streamingFallback
 	streamErr := finalizeConfiguredStreamingLLM(turnCtx, ts, exec, finalContent, contextUsage)
-	// If streaming never became visible, keep the legacy Pico interim publish path
-	// so the final answer is still delivered outside normal SendResponse.
-	if ((streamErr != nil && !isConfiguredStreamingVisibleError(streamErr)) || exec.streamingFallback) &&
+	// If streaming was never used, or it failed before visible output, or it
+	// fell back to Chat, deliver the final answer via PublishOutbound so
+	// channels like OpenResponses (which may not have streaming enabled in
+	// config) still receive the response.
+	if (!hadStreaming || (streamErr != nil && !isConfiguredStreamingVisibleError(streamErr)) || exec.streamingFallback) &&
 		!ts.opts.SendResponse && ts.opts.AllowInterimPicoPublish && finalContent != "" {
 		msg := outboundMessageForTurnWithOptions(ts, finalContent, outboundTurnMessageOptions{
 			modelName: exec.llmModelName,
