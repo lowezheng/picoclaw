@@ -413,6 +413,7 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 	var currentTextItemSeq int
 	var currentReasoningItemSeq int
 	var textStart, reasoningStart time.Time
+	var textBuf, reasoningBuf strings.Builder
 
 	heartbeat := time.NewTicker(5 * time.Second)
 	defer heartbeat.Stop()
@@ -437,9 +438,10 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 				switch ev.kind {
 				case eventKindTextDelta:
 					if hasActiveReasoningItem {
-						emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq)
+						emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq, reasoningBuf.String())
 						emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &reasoningStart, "LLM思考")
 						hasActiveReasoningItem = false
+						reasoningBuf.Reset()
 					}
 					if !hasActiveTextItem {
 						hasActiveTextItem = true
@@ -447,12 +449,14 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 						currentTextItemSeq = msgSeq
 						emitTextItemStart(w, flusher, msgID, &seqNum, &msgSeq)
 					}
+					textBuf.WriteString(ev.content)
 					emitTextItemDelta(w, flusher, msgID, &seqNum, currentTextItemSeq, ev.content)
 				case eventKindReasoning:
 					if hasActiveTextItem {
-						emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq)
+						emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq, textBuf.String())
 						emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &textStart, "LLM推理")
 						hasActiveTextItem = false
+						textBuf.Reset()
 					}
 					if !hasActiveReasoningItem {
 						hasActiveReasoningItem = true
@@ -460,42 +464,67 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 						currentReasoningItemSeq = msgSeq
 						emitReasoningItemStart(w, flusher, msgID, &seqNum, &msgSeq)
 					}
+					reasoningBuf.WriteString(ev.content)
 					emitReasoningItemDelta(w, flusher, msgID, &seqNum, currentReasoningItemSeq, ev.content)
 				case eventKindImage:
 					if hasActiveTextItem {
-						emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq)
+						emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq, textBuf.String())
 						emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &textStart, "LLM推理")
 						hasActiveTextItem = false
+						textBuf.Reset()
 					}
 					if hasActiveReasoningItem {
-						emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq)
+						emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq, reasoningBuf.String())
 						emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &reasoningStart, "LLM思考")
 						hasActiveReasoningItem = false
+						reasoningBuf.Reset()
 					}
 					emitImageItem(w, flusher, msgID, &seqNum, &msgSeq, ev.imageURL)
 				case eventKindFunctionCall:
 					if hasActiveTextItem {
-						emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq)
+						emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq, textBuf.String())
 						emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &textStart, "LLM推理")
 						hasActiveTextItem = false
+						textBuf.Reset()
 					}
 					if hasActiveReasoningItem {
-						emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq)
+						emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq, reasoningBuf.String())
 						emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &reasoningStart, "LLM思考")
 						hasActiveReasoningItem = false
+						reasoningBuf.Reset()
 					}
 					emitFunctionCallItem(w, flusher, msgID, &seqNum, msgSeq, ev)
 					msgSeq++
-				case eventKindTurnEnd:
+				case eventKindText:
 					if hasActiveTextItem {
-						emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq)
+						emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq, textBuf.String())
 						emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &textStart, "LLM推理")
 						hasActiveTextItem = false
+						textBuf.Reset()
 					}
 					if hasActiveReasoningItem {
-						emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq)
+						emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq, reasoningBuf.String())
 						emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &reasoningStart, "LLM思考")
 						hasActiveReasoningItem = false
+						reasoningBuf.Reset()
+					}
+					seq := msgSeq
+					emitTextItemStart(w, flusher, msgID, &seqNum, &msgSeq)
+					emitTextItemDelta(w, flusher, msgID, &seqNum, seq, ev.content)
+					emitTextItemEnd(w, flusher, msgID, &seqNum, seq, ev.content)
+
+				case eventKindTurnEnd:
+					if hasActiveTextItem {
+						emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq, textBuf.String())
+						emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &textStart, "LLM推理")
+						hasActiveTextItem = false
+						textBuf.Reset()
+					}
+					if hasActiveReasoningItem {
+						emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq, reasoningBuf.String())
+						emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &reasoningStart, "LLM思考")
+						hasActiveReasoningItem = false
+						reasoningBuf.Reset()
 					}
 				}
 				flusher.Flush()
@@ -528,9 +557,10 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 			switch ev.kind {
 			case eventKindTextDelta:
 				if hasActiveReasoningItem {
-					emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq)
+					emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq, reasoningBuf.String())
 					emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &reasoningStart, "LLM思考")
 					hasActiveReasoningItem = false
+					reasoningBuf.Reset()
 				}
 				if !hasActiveTextItem {
 					hasActiveTextItem = true
@@ -538,13 +568,15 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 					currentTextItemSeq = msgSeq
 					emitTextItemStart(w, flusher, msgID, &seqNum, &msgSeq)
 				}
+				textBuf.WriteString(ev.content)
 				emitTextItemDelta(w, flusher, msgID, &seqNum, currentTextItemSeq, ev.content)
 
 			case eventKindReasoning:
 				if hasActiveTextItem {
-					emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq)
+					emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq, textBuf.String())
 					emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &textStart, "LLM推理")
 					hasActiveTextItem = false
+					textBuf.Reset()
 				}
 				if !hasActiveReasoningItem {
 					hasActiveReasoningItem = true
@@ -552,45 +584,70 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 					currentReasoningItemSeq = msgSeq
 					emitReasoningItemStart(w, flusher, msgID, &seqNum, &msgSeq)
 				}
+				reasoningBuf.WriteString(ev.content)
 				emitReasoningItemDelta(w, flusher, msgID, &seqNum, currentReasoningItemSeq, ev.content)
+
+			case eventKindText:
+				if hasActiveTextItem {
+					emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq, textBuf.String())
+					emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &textStart, "LLM推理")
+					hasActiveTextItem = false
+					textBuf.Reset()
+				}
+				if hasActiveReasoningItem {
+					emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq, reasoningBuf.String())
+					emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &reasoningStart, "LLM思考")
+					hasActiveReasoningItem = false
+					reasoningBuf.Reset()
+				}
+				seq := msgSeq
+				emitTextItemStart(w, flusher, msgID, &seqNum, &msgSeq)
+				emitTextItemDelta(w, flusher, msgID, &seqNum, seq, ev.content)
+				emitTextItemEnd(w, flusher, msgID, &seqNum, seq, ev.content)
 
 			case eventKindImage:
 				if hasActiveTextItem {
-					emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq)
+					emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq, textBuf.String())
 					emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &textStart, "LLM推理")
 					hasActiveTextItem = false
+					textBuf.Reset()
 				}
 				if hasActiveReasoningItem {
-					emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq)
+					emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq, reasoningBuf.String())
 					emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &reasoningStart, "LLM思考")
 					hasActiveReasoningItem = false
+					reasoningBuf.Reset()
 				}
 				emitImageItem(w, flusher, msgID, &seqNum, &msgSeq, ev.imageURL)
 
 			case eventKindFunctionCall:
 				if hasActiveTextItem {
-					emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq)
+					emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq, textBuf.String())
 					emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &textStart, "LLM推理")
 					hasActiveTextItem = false
+					textBuf.Reset()
 				}
 				if hasActiveReasoningItem {
-					emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq)
+					emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq, reasoningBuf.String())
 					emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &reasoningStart, "LLM思考")
 					hasActiveReasoningItem = false
+					reasoningBuf.Reset()
 				}
 				emitFunctionCallItem(w, flusher, msgID, &seqNum, msgSeq, ev)
 				msgSeq++
 
 			case eventKindTurnEnd:
 				if hasActiveTextItem {
-					emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq)
+					emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq, textBuf.String())
 					emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &textStart, "LLM推理")
 					hasActiveTextItem = false
+					textBuf.Reset()
 				}
 				if hasActiveReasoningItem {
-					emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq)
+					emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq, reasoningBuf.String())
 					emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &reasoningStart, "LLM思考")
 					hasActiveReasoningItem = false
+					reasoningBuf.Reset()
 				}
 			}
 
@@ -640,13 +697,14 @@ func emitTextItemDelta(w http.ResponseWriter, flusher http.Flusher, msgID string
 	})
 }
 
-func emitTextItemEnd(w http.ResponseWriter, flusher http.Flusher, msgID string, seqNum *int, currentSeq int) {
+func emitTextItemEnd(w http.ResponseWriter, flusher http.Flusher, msgID string, seqNum *int, currentSeq int, text string) {
 	emitSSE(w, seqNum, "response.output_text.done", map[string]any{
 		"type":            "response.output_text.done",
 		"sequence_number": *seqNum,
 		"item_id":         fmt.Sprintf("%s_%d", msgID, currentSeq),
 		"output_index":    currentSeq,
 		"content_index":   0,
+		"text":            text,
 	})
 	emitSSE(w, seqNum, "response.content_part.done", map[string]any{
 		"type":            "response.content_part.done",
@@ -704,13 +762,14 @@ func emitReasoningItemDelta(w http.ResponseWriter, flusher http.Flusher, msgID s
 	})
 }
 
-func emitReasoningItemEnd(w http.ResponseWriter, flusher http.Flusher, msgID string, seqNum *int, currentSeq int) {
+func emitReasoningItemEnd(w http.ResponseWriter, flusher http.Flusher, msgID string, seqNum *int, currentSeq int, text string) {
 	emitSSE(w, seqNum, "response.reasoning_text.done", map[string]any{
 		"type":            "response.reasoning_text.done",
 		"sequence_number": *seqNum,
 		"item_id":         fmt.Sprintf("%s_%d", msgID, currentSeq),
 		"output_index":    currentSeq,
 		"content_index":   0,
+		"text":            text,
 	})
 	emitSSE(w, seqNum, "response.content_part.done", map[string]any{
 		"type":            "response.content_part.done",
@@ -835,7 +894,7 @@ func emitFunctionCallItem(w http.ResponseWriter, flusher http.Flusher, msgID str
 	})
 }
 
-func emitTextItemEndWithDuration(w http.ResponseWriter, flusher http.Flusher, msgID string, seqNum *int, currentSeq int, startTime *time.Time) {
+func emitTextItemEndWithDuration(w http.ResponseWriter, flusher http.Flusher, msgID string, seqNum *int, currentSeq int, startTime *time.Time, text string) {
 	if startTime != nil && !(*startTime).IsZero() {
 		dur := time.Since(*startTime)
 		*startTime = time.Time{}
@@ -848,10 +907,10 @@ func emitTextItemEndWithDuration(w http.ResponseWriter, flusher http.Flusher, ms
 			"delta":           fmt.Sprintf("\n\n⏱️ LLM推理耗时 %s", formatDuration(dur)),
 		})
 	}
-	emitTextItemEnd(w, flusher, msgID, seqNum, currentSeq)
+	emitTextItemEnd(w, flusher, msgID, seqNum, currentSeq, text)
 }
 
-func emitReasoningItemEndWithDuration(w http.ResponseWriter, flusher http.Flusher, msgID string, seqNum *int, currentSeq int, startTime *time.Time) {
+func emitReasoningItemEndWithDuration(w http.ResponseWriter, flusher http.Flusher, msgID string, seqNum *int, currentSeq int, startTime *time.Time, text string) {
 	if startTime != nil && !(*startTime).IsZero() {
 		dur := time.Since(*startTime)
 		*startTime = time.Time{}
@@ -864,7 +923,7 @@ func emitReasoningItemEndWithDuration(w http.ResponseWriter, flusher http.Flushe
 			"delta":           fmt.Sprintf("\n\n⏱️ LLM思考耗时 %s", formatDuration(dur)),
 		})
 	}
-	emitReasoningItemEnd(w, flusher, msgID, seqNum, currentSeq)
+	emitReasoningItemEnd(w, flusher, msgID, seqNum, currentSeq, text)
 }
 
 func emitDurationItem(w http.ResponseWriter, flusher http.Flusher, msgID string, seqNum, msgSeq *int, startTime *time.Time, label string) {
