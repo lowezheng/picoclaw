@@ -305,6 +305,7 @@ func TestServeStream_TextOnly(t *testing.T) {
 		"response.content_part.added",
 		"response.output_text.delta",
 		"response.output_text.delta",
+		"response.output_text.delta", // duration text
 		"response.output_text.done",
 		"response.content_part.done",
 		"response.output_item.done",
@@ -317,7 +318,7 @@ func TestServeStream_TextOnly(t *testing.T) {
 		t.Errorf("expected last data [DONE], got %q", last.Data)
 	}
 
-	// Verify delta contents
+	// Verify delta contents and duration text
 	var deltas []string
 	for _, ev := range events {
 		if ev.Event == "response.output_text.delta" {
@@ -328,8 +329,14 @@ func TestServeStream_TextOnly(t *testing.T) {
 			}
 		}
 	}
-	if len(deltas) != 2 || deltas[0] != "Hello" || deltas[1] != " world" {
-		t.Errorf("expected deltas [Hello, ' world'], got %v", deltas)
+	if len(deltas) != 3 {
+		t.Fatalf("expected 3 deltas, got %d: %v", len(deltas), deltas)
+	}
+	if deltas[0] != "Hello" || deltas[1] != " world" {
+		t.Errorf("expected first two deltas [Hello, ' world'], got %v", deltas[:2])
+	}
+	if !strings.Contains(deltas[2], "LLM推理耗时") {
+		t.Errorf("expected third delta to contain duration text, got %q", deltas[2])
 	}
 }
 
@@ -356,17 +363,44 @@ func TestServeStream_ReasoningAfterText(t *testing.T) {
 		"response.output_item.added",     // message
 		"response.content_part.added",    // output_text
 		"response.output_text.delta",     // Hello
+		"response.output_text.delta",     // text duration
 		"response.output_text.done",
 		"response.content_part.done",
 		"response.output_item.done",      // message done
 		"response.output_item.added",     // reasoning
 		"response.content_part.added",    // reasoning_text
 		"response.reasoning_text.delta",  // Let me think
+		"response.reasoning_text.delta",  // reasoning duration
 		"response.reasoning_text.done",
 		"response.content_part.done",
 		"response.output_item.done",      // reasoning done
 		"response.completed",
 	})
+
+	// Verify duration text appears in deltas
+	var foundTextDur, foundReasoningDur bool
+	for _, ev := range events {
+		if ev.Event == "response.output_text.delta" {
+			var payload map[string]any
+			_ = json.Unmarshal([]byte(ev.Data), &payload)
+			if d, ok := payload["delta"].(string); ok && strings.Contains(d, "LLM推理耗时") {
+				foundTextDur = true
+			}
+		}
+		if ev.Event == "response.reasoning_text.delta" {
+			var payload map[string]any
+			_ = json.Unmarshal([]byte(ev.Data), &payload)
+			if d, ok := payload["delta"].(string); ok && strings.Contains(d, "思考耗时") {
+				foundReasoningDur = true
+			}
+		}
+	}
+	if !foundTextDur {
+		t.Errorf("expected text duration delta")
+	}
+	if !foundReasoningDur {
+		t.Errorf("expected reasoning duration delta")
+	}
 }
 
 func TestServeStream_FunctionCallSequence(t *testing.T) {
@@ -391,6 +425,7 @@ func TestServeStream_FunctionCallSequence(t *testing.T) {
 		"response.output_item.added",              // message
 		"response.content_part.added",             // output_text
 		"response.output_text.delta",              // Let me
+		"response.output_text.delta",              // text duration
 		"response.output_text.done",
 		"response.content_part.done",
 		"response.output_item.done",               // message done
@@ -400,6 +435,12 @@ func TestServeStream_FunctionCallSequence(t *testing.T) {
 		"response.function_call_arguments.done",
 		"response.content_part.done",
 		"response.output_item.done",               // function_call done
+		"response.output_item.added",              // duration text item
+		"response.content_part.added",
+		"response.output_text.delta",              // function call duration
+		"response.output_text.done",
+		"response.content_part.done",
+		"response.output_item.done",
 		"response.completed",
 	})
 
@@ -418,6 +459,29 @@ func TestServeStream_FunctionCallSequence(t *testing.T) {
 				}
 			}
 		}
+	}
+
+	// Verify duration text in deltas
+	var foundTextDuration, foundFuncDuration bool
+	for _, ev := range events {
+		if ev.Event == "response.output_text.delta" {
+			var payload map[string]any
+			_ = json.Unmarshal([]byte(ev.Data), &payload)
+			if d, ok := payload["delta"].(string); ok {
+				if strings.Contains(d, "LLM推理耗时") {
+					foundTextDuration = true
+				}
+				if strings.Contains(d, "Tool调用耗时") {
+					foundFuncDuration = true
+				}
+			}
+		}
+	}
+	if !foundTextDuration {
+		t.Errorf("expected text duration delta")
+	}
+	if !foundFuncDuration {
+		t.Errorf("expected function call duration delta")
 	}
 }
 

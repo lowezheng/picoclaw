@@ -415,6 +415,213 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 	var currentTextItemSeq int
 	var currentReasoningItemSeq int
 
+	var textStart, reasoningStart, funcCallStart time.Time
+
+	closeTextItem := func() {
+		if !hasActiveTextItem {
+			return
+		}
+		writeSSEEvent(w, "response.output_text.done", map[string]any{
+			"type":            "response.output_text.done",
+			"sequence_number": seqNum,
+			"item_id":         fmt.Sprintf("%s_%d", msgID, currentTextItemSeq),
+			"output_index":    currentTextItemSeq,
+			"content_index":   0,
+		})
+		seqNum++
+		writeSSEEvent(w, "response.content_part.done", map[string]any{
+			"type":            "response.content_part.done",
+			"sequence_number": seqNum,
+			"item_id":         fmt.Sprintf("%s_%d", msgID, currentTextItemSeq),
+			"output_index":    currentTextItemSeq,
+			"content_index":   0,
+			"part":            map[string]string{"type": "output_text"},
+		})
+		seqNum++
+		writeSSEEvent(w, "response.output_item.done", map[string]any{
+			"type":            "response.output_item.done",
+			"sequence_number": seqNum,
+			"output_index":    currentTextItemSeq,
+			"item": map[string]any{
+				"id":     fmt.Sprintf("%s_%d", msgID, currentTextItemSeq),
+				"type":   "message",
+				"status": "completed",
+				"role":   "assistant",
+			},
+		})
+		seqNum++
+		hasActiveTextItem = false
+
+		if !textStart.IsZero() {
+			dur := time.Since(textStart)
+			textStart = time.Time{}
+			durSeq := msgSeq
+			msgSeq++
+			writeSSEEvent(w, "response.output_item.added", map[string]any{
+				"type":            "response.output_item.added",
+				"sequence_number": seqNum,
+				"output_index":    durSeq,
+				"item": map[string]any{
+					"id":      fmt.Sprintf("%s_%d", msgID, durSeq),
+					"type":    "message",
+					"status":  "in_progress",
+					"role":    "assistant",
+					"content": []map[string]string{},
+				},
+			})
+			seqNum++
+			writeSSEEvent(w, "response.content_part.added", map[string]any{
+				"type":            "response.content_part.added",
+				"sequence_number": seqNum,
+				"item_id":         fmt.Sprintf("%s_%d", msgID, durSeq),
+				"output_index":    durSeq,
+				"content_index":   0,
+				"part":            map[string]string{"type": "output_text", "text": ""},
+			})
+			seqNum++
+			writeSSEEvent(w, "response.output_text.delta", map[string]any{
+				"type":            "response.output_text.delta",
+				"sequence_number": seqNum,
+				"item_id":         fmt.Sprintf("%s_%d", msgID, durSeq),
+				"output_index":    durSeq,
+				"content_index":   0,
+				"delta":           fmt.Sprintf("\n\n⏱️ LLM推理耗时 %s", formatDuration(dur)),
+			})
+			seqNum++
+			writeSSEEvent(w, "response.output_text.done", map[string]any{
+				"type":            "response.output_text.done",
+				"sequence_number": seqNum,
+				"item_id":         fmt.Sprintf("%s_%d", msgID, durSeq),
+				"output_index":    durSeq,
+				"content_index":   0,
+			})
+			seqNum++
+			writeSSEEvent(w, "response.content_part.done", map[string]any{
+				"type":            "response.content_part.done",
+				"sequence_number": seqNum,
+				"item_id":         fmt.Sprintf("%s_%d", msgID, durSeq),
+				"output_index":    durSeq,
+				"content_index":   0,
+				"part":            map[string]string{"type": "output_text"},
+			})
+			seqNum++
+			writeSSEEvent(w, "response.output_item.done", map[string]any{
+				"type":            "response.output_item.done",
+				"sequence_number": seqNum,
+				"output_index":    durSeq,
+				"item": map[string]any{
+					"id":     fmt.Sprintf("%s_%d", msgID, durSeq),
+					"type":   "message",
+					"status": "completed",
+					"role":   "assistant",
+				},
+			})
+			seqNum++
+		}
+	}
+
+	closeReasoningItem := func() {
+		if !hasActiveReasoningItem {
+			return
+		}
+		writeSSEEvent(w, "response.reasoning_text.done", map[string]any{
+			"type":            "response.reasoning_text.done",
+			"sequence_number": seqNum,
+			"item_id":         fmt.Sprintf("%s_%d", msgID, currentReasoningItemSeq),
+			"output_index":    currentReasoningItemSeq,
+			"content_index":   0,
+		})
+		seqNum++
+		writeSSEEvent(w, "response.content_part.done", map[string]any{
+			"type":            "response.content_part.done",
+			"sequence_number": seqNum,
+			"item_id":         fmt.Sprintf("%s_%d", msgID, currentReasoningItemSeq),
+			"output_index":    currentReasoningItemSeq,
+			"content_index":   0,
+			"part":            map[string]string{"type": "reasoning_text"},
+		})
+		seqNum++
+		writeSSEEvent(w, "response.output_item.done", map[string]any{
+			"type":            "response.output_item.done",
+			"sequence_number": seqNum,
+			"output_index":    currentReasoningItemSeq,
+			"item": map[string]any{
+				"id":     fmt.Sprintf("%s_%d", msgID, currentReasoningItemSeq),
+				"type":   "reasoning",
+				"status": "completed",
+			},
+		})
+		seqNum++
+		hasActiveReasoningItem = false
+
+		if !reasoningStart.IsZero() {
+			dur := time.Since(reasoningStart)
+			reasoningStart = time.Time{}
+			durSeq := msgSeq
+			msgSeq++
+			writeSSEEvent(w, "response.output_item.added", map[string]any{
+				"type":            "response.output_item.added",
+				"sequence_number": seqNum,
+				"output_index":    durSeq,
+				"item": map[string]any{
+					"id":      fmt.Sprintf("%s_%d", msgID, durSeq),
+					"type":    "message",
+					"status":  "in_progress",
+					"role":    "assistant",
+					"content": []map[string]string{},
+				},
+			})
+			seqNum++
+			writeSSEEvent(w, "response.content_part.added", map[string]any{
+				"type":            "response.content_part.added",
+				"sequence_number": seqNum,
+				"item_id":         fmt.Sprintf("%s_%d", msgID, durSeq),
+				"output_index":    durSeq,
+				"content_index":   0,
+				"part":            map[string]string{"type": "output_text", "text": ""},
+			})
+			seqNum++
+			writeSSEEvent(w, "response.output_text.delta", map[string]any{
+				"type":            "response.output_text.delta",
+				"sequence_number": seqNum,
+				"item_id":         fmt.Sprintf("%s_%d", msgID, durSeq),
+				"output_index":    durSeq,
+				"content_index":   0,
+				"delta":           fmt.Sprintf("\n\n⏱️ LLM思考耗时 %s", formatDuration(dur)),
+			})
+			seqNum++
+			writeSSEEvent(w, "response.output_text.done", map[string]any{
+				"type":            "response.output_text.done",
+				"sequence_number": seqNum,
+				"item_id":         fmt.Sprintf("%s_%d", msgID, durSeq),
+				"output_index":    durSeq,
+				"content_index":   0,
+			})
+			seqNum++
+			writeSSEEvent(w, "response.content_part.done", map[string]any{
+				"type":            "response.content_part.done",
+				"sequence_number": seqNum,
+				"item_id":         fmt.Sprintf("%s_%d", msgID, durSeq),
+				"output_index":    durSeq,
+				"content_index":   0,
+				"part":            map[string]string{"type": "output_text"},
+			})
+			seqNum++
+			writeSSEEvent(w, "response.output_item.done", map[string]any{
+				"type":            "response.output_item.done",
+				"sequence_number": seqNum,
+				"output_index":    durSeq,
+				"item": map[string]any{
+					"id":     fmt.Sprintf("%s_%d", msgID, durSeq),
+					"type":   "message",
+					"status": "completed",
+					"role":   "assistant",
+				},
+			})
+			seqNum++
+		}
+	}
+
 	heartbeat := time.NewTicker(5 * time.Second)
 	defer heartbeat.Stop()
 
@@ -445,43 +652,14 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 			}
 
 			rc := http.NewResponseController(w)
-			rc.SetWriteDeadline(time.Now().Add(30 * time.Second))
+			rc.SetWriteDeadline(time.Now().Add(10 * time.Minute))
 
 			switch ev.kind {
 			case eventKindTextDelta:
-				if hasActiveReasoningItem {
-					writeSSEEvent(w, "response.reasoning_text.done", map[string]any{
-						"type":            "response.reasoning_text.done",
-						"sequence_number": seqNum,
-						"item_id":         fmt.Sprintf("%s_%d", msgID, currentReasoningItemSeq),
-						"output_index":    currentReasoningItemSeq,
-						"content_index":   0,
-					})
-					seqNum++
-					writeSSEEvent(w, "response.content_part.done", map[string]any{
-						"type":            "response.content_part.done",
-						"sequence_number": seqNum,
-						"item_id":         fmt.Sprintf("%s_%d", msgID, currentReasoningItemSeq),
-						"output_index":    currentReasoningItemSeq,
-						"content_index":   0,
-						"part":            map[string]string{"type": "reasoning_text"},
-					})
-					seqNum++
-					writeSSEEvent(w, "response.output_item.done", map[string]any{
-						"type":            "response.output_item.done",
-						"sequence_number": seqNum,
-						"output_index":    currentReasoningItemSeq,
-						"item": map[string]any{
-							"id":     fmt.Sprintf("%s_%d", msgID, currentReasoningItemSeq),
-							"type":   "reasoning",
-							"status": "completed",
-						},
-					})
-					seqNum++
-					hasActiveReasoningItem = false
-				}
+				closeReasoningItem()
 				if !hasActiveTextItem {
 					hasActiveTextItem = true
+					textStart = time.Now()
 					currentTextItemSeq = msgSeq
 					writeSSEEvent(w, "response.output_item.added", map[string]any{
 						"type":            "response.output_item.added",
@@ -505,6 +683,7 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 						"part":            map[string]string{"type": "output_text", "text": ""},
 					})
 					seqNum++
+					msgSeq++
 				}
 				writeSSEEvent(w, "response.output_text.delta", map[string]any{
 					"type":            "response.output_text.delta",
@@ -517,40 +696,10 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 				seqNum++
 
 			case eventKindReasoning:
-				if hasActiveTextItem {
-					writeSSEEvent(w, "response.output_text.done", map[string]any{
-						"type":            "response.output_text.done",
-						"sequence_number": seqNum,
-						"item_id":         fmt.Sprintf("%s_%d", msgID, currentTextItemSeq),
-						"output_index":    currentTextItemSeq,
-						"content_index":   0,
-					})
-					seqNum++
-					writeSSEEvent(w, "response.content_part.done", map[string]any{
-						"type":            "response.content_part.done",
-						"sequence_number": seqNum,
-						"item_id":         fmt.Sprintf("%s_%d", msgID, currentTextItemSeq),
-						"output_index":    currentTextItemSeq,
-						"content_index":   0,
-						"part":            map[string]string{"type": "output_text"},
-					})
-					seqNum++
-					writeSSEEvent(w, "response.output_item.done", map[string]any{
-						"type":            "response.output_item.done",
-						"sequence_number": seqNum,
-						"output_index":    currentTextItemSeq,
-						"item": map[string]any{
-							"id":     fmt.Sprintf("%s_%d", msgID, currentTextItemSeq),
-							"type":   "message",
-							"status": "completed",
-							"role":   "assistant",
-						},
-					})
-					seqNum++
-					hasActiveTextItem = false
-				}
+				closeTextItem()
 				if !hasActiveReasoningItem {
 					hasActiveReasoningItem = true
+					reasoningStart = time.Now()
 					currentReasoningItemSeq = msgSeq
 					writeSSEEvent(w, "response.output_item.added", map[string]any{
 						"type":            "response.output_item.added",
@@ -573,6 +722,7 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 						"part":            map[string]string{"type": "reasoning_text", "text": ""},
 					})
 					seqNum++
+					msgSeq++
 				}
 				writeSSEEvent(w, "response.reasoning_text.delta", map[string]any{
 					"type":            "response.reasoning_text.delta",
@@ -585,69 +735,8 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 				seqNum++
 
 			case eventKindImage:
-				if hasActiveTextItem {
-					writeSSEEvent(w, "response.output_text.done", map[string]any{
-						"type":            "response.output_text.done",
-						"sequence_number": seqNum,
-						"item_id":         fmt.Sprintf("%s_%d", msgID, currentTextItemSeq),
-						"output_index":    currentTextItemSeq,
-						"content_index":   0,
-					})
-					seqNum++
-					writeSSEEvent(w, "response.content_part.done", map[string]any{
-						"type":            "response.content_part.done",
-						"sequence_number": seqNum,
-						"item_id":         fmt.Sprintf("%s_%d", msgID, currentTextItemSeq),
-						"output_index":    currentTextItemSeq,
-						"content_index":   0,
-						"part":            map[string]string{"type": "output_text"},
-					})
-					seqNum++
-					writeSSEEvent(w, "response.output_item.done", map[string]any{
-						"type":            "response.output_item.done",
-						"sequence_number": seqNum,
-						"output_index":    currentTextItemSeq,
-						"item": map[string]any{
-							"id":     fmt.Sprintf("%s_%d", msgID, currentTextItemSeq),
-							"type":   "message",
-							"status": "completed",
-							"role":   "assistant",
-						},
-					})
-					seqNum++
-					hasActiveTextItem = false
-				}
-				if hasActiveReasoningItem {
-					writeSSEEvent(w, "response.reasoning_text.done", map[string]any{
-						"type":            "response.reasoning_text.done",
-						"sequence_number": seqNum,
-						"item_id":         fmt.Sprintf("%s_%d", msgID, currentReasoningItemSeq),
-						"output_index":    currentReasoningItemSeq,
-						"content_index":   0,
-					})
-					seqNum++
-					writeSSEEvent(w, "response.content_part.done", map[string]any{
-						"type":            "response.content_part.done",
-						"sequence_number": seqNum,
-						"item_id":         fmt.Sprintf("%s_%d", msgID, currentReasoningItemSeq),
-						"output_index":    currentReasoningItemSeq,
-						"content_index":   0,
-						"part":            map[string]string{"type": "reasoning_text"},
-					})
-					seqNum++
-					writeSSEEvent(w, "response.output_item.done", map[string]any{
-						"type":            "response.output_item.done",
-						"sequence_number": seqNum,
-						"output_index":    currentReasoningItemSeq,
-						"item": map[string]any{
-							"id":     fmt.Sprintf("%s_%d", msgID, currentReasoningItemSeq),
-							"type":   "reasoning",
-							"status": "completed",
-						},
-					})
-					seqNum++
-					hasActiveReasoningItem = false
-				}
+				closeTextItem()
+				closeReasoningItem()
 				// Image: add item, part, part.done, item.done (no delta)
 				writeSSEEvent(w, "response.output_item.added", map[string]any{
 					"type":            "response.output_item.added",
@@ -677,7 +766,7 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 					"item_id":         fmt.Sprintf("%s_%d", msgID, msgSeq),
 					"output_index":    msgSeq,
 					"content_index":   0,
-					"part":            map[string]string{"type": "output_image"},
+					"part":            map[string]string{"type": "output_image", "url": ev.imageURL},
 				})
 				seqNum++
 				writeSSEEvent(w, "response.output_item.done", map[string]any{
@@ -685,90 +774,31 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 					"sequence_number": seqNum,
 					"output_index":    msgSeq,
 					"item": map[string]any{
-						"id":     fmt.Sprintf("%s_%d", msgID, msgSeq),
-						"type":   "message",
-						"status": "completed",
-						"role":   "assistant",
+						"id":      fmt.Sprintf("%s_%d", msgID, msgSeq),
+						"type":    "message",
+						"status":  "completed",
+						"role":    "assistant",
+						"content": []map[string]string{{"type": "output_image", "url": ev.imageURL}},
 					},
 				})
 				seqNum++
 				msgSeq++
 
 			case eventKindFunctionCall:
-				if hasActiveTextItem {
-					writeSSEEvent(w, "response.output_text.done", map[string]any{
-						"type":            "response.output_text.done",
-						"sequence_number": seqNum,
-						"item_id":         fmt.Sprintf("%s_%d", msgID, currentTextItemSeq),
-						"output_index":    currentTextItemSeq,
-						"content_index":   0,
-					})
-					seqNum++
-					writeSSEEvent(w, "response.content_part.done", map[string]any{
-						"type":            "response.content_part.done",
-						"sequence_number": seqNum,
-						"item_id":         fmt.Sprintf("%s_%d", msgID, currentTextItemSeq),
-						"output_index":    currentTextItemSeq,
-						"content_index":   0,
-						"part":            map[string]string{"type": "output_text"},
-					})
-					seqNum++
-					writeSSEEvent(w, "response.output_item.done", map[string]any{
-						"type":            "response.output_item.done",
-						"sequence_number": seqNum,
-						"output_index":    currentTextItemSeq,
-						"item": map[string]any{
-							"id":     fmt.Sprintf("%s_%d", msgID, currentTextItemSeq),
-							"type":   "message",
-							"status": "completed",
-							"role":   "assistant",
-						},
-					})
-					seqNum++
-					hasActiveTextItem = false
-				}
-				if hasActiveReasoningItem {
-					writeSSEEvent(w, "response.reasoning_text.done", map[string]any{
-						"type":            "response.reasoning_text.done",
-						"sequence_number": seqNum,
-						"item_id":         fmt.Sprintf("%s_%d", msgID, currentReasoningItemSeq),
-						"output_index":    currentReasoningItemSeq,
-						"content_index":   0,
-					})
-					seqNum++
-					writeSSEEvent(w, "response.content_part.done", map[string]any{
-						"type":            "response.content_part.done",
-						"sequence_number": seqNum,
-						"item_id":         fmt.Sprintf("%s_%d", msgID, currentReasoningItemSeq),
-						"output_index":    currentReasoningItemSeq,
-						"content_index":   0,
-						"part":            map[string]string{"type": "reasoning_text"},
-					})
-					seqNum++
-					writeSSEEvent(w, "response.output_item.done", map[string]any{
-						"type":            "response.output_item.done",
-						"sequence_number": seqNum,
-						"output_index":    currentReasoningItemSeq,
-						"item": map[string]any{
-							"id":     fmt.Sprintf("%s_%d", msgID, currentReasoningItemSeq),
-							"type":   "reasoning",
-							"status": "completed",
-						},
-					})
-					seqNum++
-					hasActiveReasoningItem = false
-				}
+				funcCallStart = time.Now()
+				closeTextItem()
+				closeReasoningItem()
 				// Function call: full sequence
 				writeSSEEvent(w, "response.output_item.added", map[string]any{
 					"type":            "response.output_item.added",
 					"sequence_number": seqNum,
 					"output_index":    msgSeq,
 					"item": map[string]any{
-						"id":     fmt.Sprintf("%s_%d", msgID, msgSeq),
-						"type":   "function_call",
-						"status": "in_progress",
+						"id":      fmt.Sprintf("%s_%d", msgID, msgSeq),
+						"type":    "function_call",
+						"status":  "in_progress",
 						"call_id": ev.callID,
-						"name":   ev.name,
+						"name":    ev.name,
 					},
 				})
 				seqNum++
@@ -812,31 +842,64 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 					"sequence_number": seqNum,
 					"output_index":    msgSeq,
 					"item": map[string]any{
-						"id":     fmt.Sprintf("%s_%d", msgID, msgSeq),
-						"type":   "function_call",
-						"status": "completed",
+						"id":      fmt.Sprintf("%s_%d", msgID, msgSeq),
+						"type":    "function_call",
+						"status":  "completed",
 						"call_id": ev.callID,
-						"name":   ev.name,
+						"name":    ev.name,
 					},
 				})
 				seqNum++
-				msgSeq++
-
-			case eventKindTurnEnd:
-				if hasActiveTextItem {
+				// Emit a text item with the function call duration so the frontend can display it
+				if !funcCallStart.IsZero() {
+					durMs := time.Since(funcCallStart).Milliseconds()
+					funcCallStart = time.Time{}
+					fcDurSeq := msgSeq
+					msgSeq++
+					writeSSEEvent(w, "response.output_item.added", map[string]any{
+						"type":            "response.output_item.added",
+						"sequence_number": seqNum,
+						"output_index":    fcDurSeq,
+						"item": map[string]any{
+							"id":      fmt.Sprintf("%s_%d", msgID, fcDurSeq),
+							"type":    "message",
+							"status":  "in_progress",
+							"role":    "assistant",
+							"content": []map[string]string{},
+						},
+					})
+					seqNum++
+					writeSSEEvent(w, "response.content_part.added", map[string]any{
+						"type":            "response.content_part.added",
+						"sequence_number": seqNum,
+						"item_id":         fmt.Sprintf("%s_%d", msgID, fcDurSeq),
+						"output_index":    fcDurSeq,
+						"content_index":   0,
+						"part":            map[string]string{"type": "output_text", "text": ""},
+					})
+					seqNum++
+					writeSSEEvent(w, "response.output_text.delta", map[string]any{
+						"type":            "response.output_text.delta",
+						"sequence_number": seqNum,
+						"item_id":         fmt.Sprintf("%s_%d", msgID, fcDurSeq),
+						"output_index":    fcDurSeq,
+						"content_index":   0,
+						"delta":           fmt.Sprintf("\n\n⏱️ Tool调用耗时 %s", formatDuration(time.Duration(durMs)*time.Millisecond)),
+					})
+					seqNum++
 					writeSSEEvent(w, "response.output_text.done", map[string]any{
 						"type":            "response.output_text.done",
 						"sequence_number": seqNum,
-						"item_id":         fmt.Sprintf("%s_%d", msgID, currentTextItemSeq),
-						"output_index":    currentTextItemSeq,
+						"item_id":         fmt.Sprintf("%s_%d", msgID, fcDurSeq),
+						"output_index":    fcDurSeq,
 						"content_index":   0,
 					})
 					seqNum++
 					writeSSEEvent(w, "response.content_part.done", map[string]any{
 						"type":            "response.content_part.done",
 						"sequence_number": seqNum,
-						"item_id":         fmt.Sprintf("%s_%d", msgID, currentTextItemSeq),
-						"output_index":    currentTextItemSeq,
+						"item_id":         fmt.Sprintf("%s_%d", msgID, fcDurSeq),
+						"output_index":    fcDurSeq,
 						"content_index":   0,
 						"part":            map[string]string{"type": "output_text"},
 					})
@@ -844,48 +907,22 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 					writeSSEEvent(w, "response.output_item.done", map[string]any{
 						"type":            "response.output_item.done",
 						"sequence_number": seqNum,
-						"output_index":    currentTextItemSeq,
+						"output_index":    fcDurSeq,
 						"item": map[string]any{
-							"id":     fmt.Sprintf("%s_%d", msgID, currentTextItemSeq),
+							"id":     fmt.Sprintf("%s_%d", msgID, fcDurSeq),
 							"type":   "message",
 							"status": "completed",
 							"role":   "assistant",
 						},
 					})
 					seqNum++
-					hasActiveTextItem = false
+				} else {
+					msgSeq++
 				}
-				if hasActiveReasoningItem {
-					writeSSEEvent(w, "response.reasoning_text.done", map[string]any{
-						"type":            "response.reasoning_text.done",
-						"sequence_number": seqNum,
-						"item_id":         fmt.Sprintf("%s_%d", msgID, currentReasoningItemSeq),
-						"output_index":    currentReasoningItemSeq,
-						"content_index":   0,
-					})
-					seqNum++
-					writeSSEEvent(w, "response.content_part.done", map[string]any{
-						"type":            "response.content_part.done",
-						"sequence_number": seqNum,
-						"item_id":         fmt.Sprintf("%s_%d", msgID, currentReasoningItemSeq),
-						"output_index":    currentReasoningItemSeq,
-						"content_index":   0,
-						"part":            map[string]string{"type": "reasoning_text"},
-					})
-					seqNum++
-					writeSSEEvent(w, "response.output_item.done", map[string]any{
-						"type":            "response.output_item.done",
-						"sequence_number": seqNum,
-						"output_index":    currentReasoningItemSeq,
-						"item": map[string]any{
-							"id":     fmt.Sprintf("%s_%d", msgID, currentReasoningItemSeq),
-							"type":   "reasoning",
-							"status": "completed",
-						},
-					})
-					seqNum++
-					hasActiveReasoningItem = false
-				}
+
+			case eventKindTurnEnd:
+				closeTextItem()
+				closeReasoningItem()
 			}
 
 			flusher.Flush()
@@ -894,8 +931,20 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 }
 
 func writeSSEEvent(w http.ResponseWriter, eventType string, payload map[string]any) {
+	fmt.Fprintf(w, ": timestamp-%s\n\n", time.Now().Format("15:04:05"))
 	data, _ := json.Marshal(payload)
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, string(data))
+}
+
+func formatDuration(d time.Duration) string {
+	ms := d.Milliseconds()
+	if ms >= 60000 {
+		return fmt.Sprintf("%.1fmin", float64(ms)/60000.0)
+	}
+	if ms >= 1000 {
+		return fmt.Sprintf("%.1fs", float64(ms)/1000.0)
+	}
+	return fmt.Sprintf("%dms", ms)
 }
 
 func stripContentsFromItem(item ResponseItem) ResponseItem {

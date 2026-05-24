@@ -3,6 +3,7 @@ package openresponses
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -140,7 +141,58 @@ func readBody(t *testing.T, r io.Reader) string {
 	return string(b)
 }
 
-func readSSE(t *testing.T, body io.Reader, timeout time.Duration) []sseEvent {
+// readCloserWithCancel wraps an io.ReadCloser and calls cancel on Close.
+type readCloserWithCancel struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (r *readCloserWithCancel) Close() error {
+	r.cancel()
+	return r.ReadCloser.Close()
+}
+
+// doPostSSE is used for SSE streaming requests.
+// It does NOT pre-read the response body; the caller must close resp.Body.
+// The overall request lifetime (including body read) is bounded by timeout via context.
+func doPostSSE(t *testing.T, path, body string, withAuth bool, timeout time.Duration) *http.Response {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+
+	url := testBaseURL
+	if path != "" {
+		url = testBaseURL + path
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(body))
+	if err != nil {
+		cancel()
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if withAuth {
+		req.Header.Set("Authorization", "Bearer "+testToken())
+	}
+	dumpRequest(t, req, body)
+	client := &http.Client{} // no hard timeout; context controls cancellation
+	resp, err := client.Do(req)
+	if err != nil {
+		cancel()
+		t.Fatalf("request failed: %v", err)
+	}
+	// SSE: do not pre-read body; log headers only
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("%s %s\n", resp.Proto, resp.Status))
+	for k, v := range resp.Header {
+		b.WriteString(fmt.Sprintf("%s: %s\n", k, strings.Join(v, ", ")))
+	}
+	b.WriteString("\n[SSE stream, body read by caller]")
+	t.Logf("\n=== RESPONSE ===\n%s\n=== END RESPONSE ===", b.String())
+	// Bind cancel to body.Close so the context lives as long as the body is being read
+	resp.Body = &readCloserWithCancel{ReadCloser: resp.Body, cancel: cancel}
+	return resp
+}
+
+func readSSE(t *testing.T, body io.Reader) []sseEvent {
 	t.Helper()
 
 	// Read all raw SSE text first so we can print it
@@ -148,6 +200,8 @@ func readSSE(t *testing.T, body io.Reader, timeout time.Duration) []sseEvent {
 	if err != nil {
 		t.Fatalf("read SSE body: %v", err)
 	}
+
+	t.Logf("SSE raw response (%d bytes):\n%s", len(raw), string(raw))
 
 	var events []sseEvent
 	scanner := bufio.NewScanner(bytes.NewReader(raw))
@@ -310,11 +364,10 @@ func TestIntegration_NonStreaming_MultiPartInput(t *testing.T) {
 }
 
 // -- Streaming SSE response --
-
 func TestIntegration_Streaming_Text(t *testing.T) {
 	convID := "conv_integ_stream_" + time.Now().Format("150405")
 	body := `{"input":"Say exactly: Hello from SSE stream","stream":true,"conversation_id":"` + convID + `"}`
-	resp := doPost(t, "/chat", body, true)
+	resp := doPostSSE(t, "/chat", body, true, 30*time.Second)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -325,7 +378,71 @@ func TestIntegration_Streaming_Text(t *testing.T) {
 		t.Fatalf("expected text/event-stream, got %q", ct)
 	}
 
-	events := readSSE(t, resp.Body, 30*time.Second)
+	events := readSSE(t, resp.Body)
+	if len(events) == 0 {
+		t.Fatal("expected SSE events, got none")
+	}
+
+	// Must start with response.in_progress
+	if events[0].Event != "response.in_progress" {
+		t.Errorf("first event should be response.in_progress, got %q", events[0].Event)
+	}
+
+	// Must end with response.completed and [DONE]
+	last := events[len(events)-1]
+	if last.Event == "response.completed" {
+		// response.completed is second-to-last, [DONE] is last
+		if len(events) < 2 {
+			t.Fatal("expected at least 2 events including [DONE]")
+		}
+		if events[len(events)-2].Event != "response.completed" {
+			t.Errorf("expected response.completed before [DONE]")
+		}
+	} else if last.Data != "[DONE]" {
+		t.Errorf("expected [DONE] at end, got event=%q data=%q", last.Event, last.Data)
+	}
+
+	// Verify text delta events exist
+	var hasTextDelta bool
+	for _, ev := range events {
+		if ev.Event == "response.output_text.delta" {
+			hasTextDelta = true
+			break
+		}
+	}
+	if !hasTextDelta {
+		t.Error("expected at least one response.output_text.delta event")
+	}
+
+	// Verify output_item.added exists
+	var hasOutputItem bool
+	for _, ev := range events {
+		if ev.Event == "response.output_item.added" {
+			hasOutputItem = true
+			break
+		}
+	}
+	if !hasOutputItem {
+		t.Error("expected response.output_item.added event")
+	}
+}
+
+func TestIntegration_Streaming_Text2(t *testing.T) {
+	convID := "conv_integ_stream_" + time.Now().Format("150405")
+	body := `{"input":"2. DD0108基于产品的投资策略，分析我的组合持仓\n3. 图片形式展示我的持仓进行多维度聚合","stream":true,"conversation_id":"` + convID + `"}`
+	// Longer timeout for tool-call + image generation pipeline
+	resp := doPostSSE(t, "/chat", body, true, 15*time.Minute)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyStr := readBody(t, resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, bodyStr)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("expected text/event-stream, got %q", ct)
+	}
+
+	events := readSSE(t, resp.Body)
 	if len(events) == 0 {
 		t.Fatal("expected SSE events, got none")
 	}
@@ -377,7 +494,7 @@ func TestIntegration_Streaming_Text(t *testing.T) {
 func TestIntegration_Streaming_EventSequence(t *testing.T) {
 	convID := "conv_integ_seq_" + time.Now().Format("150405")
 	body := `{"input":"Reply with exactly the word: OK","stream":true,"conversation_id":"` + convID + `"}`
-	resp := doPost(t, "/chat", body, true)
+	resp := doPostSSE(t, "/chat", body, true, 30*time.Second)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -385,7 +502,7 @@ func TestIntegration_Streaming_EventSequence(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, bodyStr)
 	}
 
-	events := readSSE(t, resp.Body, 30*time.Second)
+	events := readSSE(t, resp.Body)
 
 	// Verify exact first event sequence for a text response
 	if len(events) < 4 {
@@ -427,7 +544,7 @@ func TestIntegration_Streaming_MultiPartInput(t *testing.T) {
 		t.Fatalf("marshal input: %v", err)
 	}
 	body := `{"input":` + string(inputJSON) + `,"stream":true,"conversation_id":"` + convID + `"}`
-	resp := doPost(t, "/chat", body, true)
+	resp := doPostSSE(t, "/chat", body, true, 30*time.Second)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -438,7 +555,7 @@ func TestIntegration_Streaming_MultiPartInput(t *testing.T) {
 		t.Fatalf("expected text/event-stream, got %q", ct)
 	}
 
-	events := readSSE(t, resp.Body, 30*time.Second)
+	events := readSSE(t, resp.Body)
 	if len(events) == 0 {
 		t.Fatal("expected SSE events, got none")
 	}

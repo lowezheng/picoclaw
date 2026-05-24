@@ -72,6 +72,7 @@
       "all": "均展示"
     },
     "toolLabel": "工具",
+    "toolCallLabel": "{{tool}}",
     "codeLabel": "代码",
     "copyMessage": "复制消息",
     "copyCode": "复制代码",

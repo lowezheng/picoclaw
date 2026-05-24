@@ -27,6 +27,7 @@ import (
 	_ "github.com/sipeed/picoclaw/pkg/channels/maixcam"
 	_ "github.com/sipeed/picoclaw/pkg/channels/mqtt"
 	_ "github.com/sipeed/picoclaw/pkg/channels/onebot"
+	_ "github.com/sipeed/picoclaw/pkg/channels/openresponses"
 	_ "github.com/sipeed/picoclaw/pkg/channels/pico"
 	_ "github.com/sipeed/picoclaw/pkg/channels/qq"
 	_ "github.com/sipeed/picoclaw/pkg/channels/slack"

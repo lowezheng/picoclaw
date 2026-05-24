@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/constants"
 	runtimeevents "github.com/sipeed/picoclaw/pkg/events"
 	"github.com/sipeed/picoclaw/pkg/logger"
@@ -555,6 +556,26 @@ func (p *Pipeline) CallLLM(
 			// The async variant can race with turn teardown and intermittently drop the
 			// thought message in CI even though the LLM produced reasoning content.
 			al.publishPicoReasoning(turnCtx, reasoningContent, ts.chatID, ts.sessionKey, exec.llmModelName)
+		}
+	} else if ts.channel == "openresponses" {
+		// OpenResponses has no separate reasoning channel; publish reasoning
+		// as a thought message directly to its chat so the SSE stream can
+		// emit reasoning events.
+		if strings.TrimSpace(reasoningContent) != "" {
+			pubCtx, pubCancel := context.WithTimeout(turnCtx, 3*time.Second)
+			err := al.bus.PublishOutbound(pubCtx, outboundMessageForTurnWithOptions(
+				ts,
+				reasoningContent,
+				outboundTurnMessageOptions{kind: messageKindThought, modelName: exec.llmModelName},
+			))
+			pubCancel()
+			if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) && !errors.Is(err, bus.ErrBusClosed) {
+				logger.WarnCF("agent", "Failed to publish openresponses reasoning", map[string]any{
+					"channel": ts.channel,
+					"chat_id": ts.chatID,
+					"error":   err.Error(),
+				})
+			}
 		}
 	} else {
 		go al.handleReasoning(

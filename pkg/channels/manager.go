@@ -1107,7 +1107,7 @@ func (m *Manager) SetupHTTPServerListeners(listeners []net.Listener, addr string
 		Addr:         addr,
 		Handler:      m.mux,
 		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		WriteTimeout: 10 * time.Minute, // allow long-lived SSE streams
 	}
 	m.httpListeners = append([]net.Listener(nil), listeners...)
 }

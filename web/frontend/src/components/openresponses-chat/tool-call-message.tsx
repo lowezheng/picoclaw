@@ -77,16 +77,18 @@ export function ToolCallMessage({
         )}
 
         {/* Output */}
-        <div
-          className={cn(
-            "overflow-hidden transition-all",
-            isExpanded ? "max-h-[600px]" : "max-h-[120px]",
-          )}
-        >
-          <pre className="whitespace-pre-wrap break-words p-3 text-[13px] leading-relaxed text-slate-800 dark:text-slate-100">
-            {output || "..."}
-          </pre>
-        </div>
+        {output && (
+          <div
+            className={cn(
+              "overflow-hidden transition-all",
+              isExpanded ? "max-h-[600px]" : "max-h-[120px]",
+            )}
+          >
+            <pre className="whitespace-pre-wrap break-words p-3 text-[13px] leading-relaxed text-slate-800 dark:text-slate-100">
+              {output}
+            </pre>
+          </div>
+        )}
 
         {/* Gradient fade when collapsed */}
         {!isExpanded && output && output.length > 200 && (
@@ -123,3 +125,4 @@ export function ToolCallMessage({
     </div>
   )
 }
+

@@ -37,6 +37,10 @@ export default defineConfig({
         target: "ws://localhost:18800",
         ws: true,
       },
+      "/v1/responses": {
+        target: "http://localhost:18800",
+        changeOrigin: true,
+      },
     },
   },
 })

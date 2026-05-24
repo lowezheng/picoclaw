@@ -364,6 +364,16 @@ func (s *openResponsesStreamer) UpdateReasoning(ctx context.Context, content str
 	return nil
 }
 
+func (s *openResponsesStreamer) FinalizeReasoning(ctx context.Context, content string) error {
+	if len(content) <= len(s.lastReasoning) {
+		return nil
+	}
+	delta := content[len(s.lastReasoning):]
+	s.lastReasoning = content
+	s.stream.push(streamEvent{kind: eventKindReasoning, content: delta})
+	return nil
+}
+
 func (s *openResponsesStreamer) Finalize(ctx context.Context, content string) error {
 	// If no text was streamed via Update, push the final content as a text event
 	// so buildResponse can capture it before turn_end.

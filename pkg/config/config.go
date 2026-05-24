@@ -681,10 +681,11 @@ type SlackWebhookTarget struct {
 }
 
 type OpenResponsesSettings struct {
-	Token          SecureString `json:"token,omitzero"          yaml:"token,omitempty"         env:"PICOCLAW_CHANNELS_OPENRESPONSES_TOKEN"`
-	EndpointPath   string       `json:"endpoint_path,omitempty" yaml:"-"`
-	RequestTimeout int          `json:"request_timeout,omitempty" yaml:"-"`
-	MaxBodySize    int64        `json:"max_body_size,omitempty" yaml:"-"`
+	Token          SecureString    `json:"token,omitzero"          yaml:"token,omitempty"         env:"PICOCLAW_CHANNELS_OPENRESPONSES_TOKEN"`
+	EndpointPath   string          `json:"endpoint_path,omitempty" yaml:"-"`
+	RequestTimeout int             `json:"request_timeout,omitempty" yaml:"-"`
+	MaxBodySize    int64           `json:"max_body_size,omitempty" yaml:"-"`
+	Streaming      StreamingConfig `json:"streaming,omitzero"      yaml:"-"`
 }
 
 type HeartbeatConfig struct {

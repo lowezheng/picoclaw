@@ -22,22 +22,26 @@ import { formatMessageTime } from "@/components/openresponses-chat/utils"
 import { cn } from "@/components/openresponses-chat/lib/utils"
 import { parseMessageBlocks } from "@/components/openresponses-chat/lib/parse-message-blocks"
 import { type ChatAttachment, showThoughtsAtom } from "@/store/openresponses-chat"
+import { ToolCallMessage } from "@/components/openresponses-chat/tool-call-message"
 
 interface AssistantMessageProps {
   content: string
   attachments?: ChatAttachment[]
-  isThought?: boolean
+  kind?: "normal" | "thought" | "tool_calls"
   timestamp?: string | number
+  toolCalls?: { id?: string; type?: string; function?: { name?: string; arguments?: string } }[]
   onSelectOption?: (option: string) => void
 }
 
 export function AssistantMessage({
   content,
   attachments = [],
-  isThought = false,
+  kind = "normal",
   timestamp = "",
+  toolCalls,
   onSelectOption,
 }: AssistantMessageProps) {
+  const isThought = kind === "thought"
   const { t } = useTranslation()
   const [isCopied, setIsCopied] = useState(false)
   const hasText = content.trim().length > 0
@@ -214,6 +218,18 @@ export function AssistantMessage({
                 <IconDownload className="h-4 w-4 transition-transform duration-300 group-hover/file:-translate-y-[1px]" />
               </div>
             </a>
+          ))}
+        </div>
+      )}
+
+      {toolCalls && toolCalls.length > 0 && (
+        <div className="flex flex-col gap-2">
+          {toolCalls.map((tc, idx) => (
+            <ToolCallMessage
+              key={tc.id || idx}
+              toolName={tc.function?.name || tc.type || "tool"}
+              args={tc.function?.arguments}
+            />
           ))}
         </div>
       )}

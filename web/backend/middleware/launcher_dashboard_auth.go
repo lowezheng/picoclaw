@@ -301,6 +301,10 @@ func rejectLauncherDashboardAuth(w http.ResponseWriter, r *http.Request, canonic
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	if canonicalPath == "/v1/responses/chat" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	if strings.HasPrefix(canonicalPath, "/api/") {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)

@@ -72,6 +72,7 @@
       "all": "Show both"
     },
     "toolLabel": "Tool",
+    "toolCallLabel": "{{tool}}",
     "codeLabel": "Code",
     "copyMessage": "Copy message",
     "copyCode": "Copy code",
