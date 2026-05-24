@@ -1,7 +1,10 @@
 package openresponses
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -531,10 +534,20 @@ func TestServeStream_ImageEvent(t *testing.T) {
 
 // -- serveJSON response tests --
 
-// noFlusher wraps a ResponseWriter without exposing Flush(), forcing serveJSON
-// down the non-streaming JSON path for tests.
-type noFlusher struct {
-	http.ResponseWriter
+// extractSSECompletedData parses an SSE response body and returns the data
+// payload of the first response.completed event.
+func extractSSECompletedData(body []byte) ([]byte, error) {
+	var currentEvent string
+	scanner := bufio.NewScanner(bytes.NewReader(body))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "event: ") {
+			currentEvent = strings.TrimPrefix(line, "event: ")
+		} else if strings.HasPrefix(line, "data: ") && currentEvent == "response.completed" {
+			return []byte(strings.TrimPrefix(line, "data: ")), nil
+		}
+	}
+	return nil, fmt.Errorf("no response.completed event found")
 }
 
 func TestServeJSON_TextDeltaAccumulation(t *testing.T) {
@@ -550,16 +563,26 @@ func TestServeJSON_TextDeltaAccumulation(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses/chat", nil)
-	ch.serveJSON(&noFlusher{rr}, req, stream, "conv_json", CreateResponseRequest{})
+	ch.serveJSON(rr, req, stream, "conv_json", CreateResponseRequest{})
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
+	if ct := rr.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("expected text/event-stream, got %q", ct)
+	}
 
-	var resp Response
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+	data, err := extractSSECompletedData(rr.Body.Bytes())
+	if err != nil {
 		t.Fatal(err)
 	}
+	var envelope struct {
+		Response Response `json:"response"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	resp := envelope.Response
 	if resp.Status != "completed" {
 		t.Errorf("expected status completed, got %q", resp.Status)
 	}
@@ -583,20 +606,34 @@ func TestServeJSON_FunctionCallOutput(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses/chat", nil)
-	ch.serveJSON(&noFlusher{rr}, req, stream, "conv_fc", CreateResponseRequest{})
+	ch.serveJSON(rr, req, stream, "conv_fc", CreateResponseRequest{})
 
-	var resp Response
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	data, err := extractSSECompletedData(rr.Body.Bytes())
+	if err != nil {
 		t.Fatal(err)
 	}
+	var envelope struct {
+		Response Response `json:"response"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	resp := envelope.Response
+	// Non-streaming output filters out reasoning and function_call,
+	// leaving only message items. With no text content, a fallback
+	// empty message is generated.
 	if len(resp.Output) != 1 {
 		t.Fatalf("expected 1 output item, got %d", len(resp.Output))
 	}
-	if resp.Output[0].Type != "function_call" {
-		t.Errorf("expected function_call type, got %q", resp.Output[0].Type)
+	if resp.Output[0].Type != "message" {
+		t.Errorf("expected message type, got %q", resp.Output[0].Type)
 	}
-	if resp.Output[0].Content[0].Text != `{"x":1}` {
-		t.Errorf("expected arguments, got %q", resp.Output[0].Content[0].Text)
+	if resp.Output[0].Content[0].Text != "" {
+		t.Errorf("expected empty text, got %q", resp.Output[0].Content[0].Text)
 	}
 }
 

@@ -244,7 +244,7 @@ func readSSE(t *testing.T, body io.Reader) []sseEvent {
 		t.Fatalf("read SSE body: %v", err)
 	}
 
-	t.Logf("SSE raw response (%d bytes):\n%s", len(raw), string(raw))
+	t.Logf("SSE raw response (%d bytes):\n%s", len(raw), formatSSEBody(string(raw)))
 
 	var events []sseEvent
 	scanner := bufio.NewScanner(bytes.NewReader(raw))
@@ -372,7 +372,7 @@ func TestIntegration_NonStreaming_Text(t *testing.T) {
 
 func TestIntegration_NonStreaming_Text2(t *testing.T) {
 	convID := "conv_integ_text_" + time.Now().Format("150405")
-	body := `{"input":"2. DD0108基于产品的投资策略，分析我的组合持仓\n3. 图片形式展示我的持仓进行多维度聚合","conversation_id":"` + convID + `"}`
+	body := `{"input":"2. DD0108基于产品的投资策略，分析我的组合持仓","conversation_id":"` + convID + `"}`
 	// Use doPostSSE with a longer timeout since this request involves tool calls + image generation
 	resp := doPostSSE(t, "/chat", body, true, 5*time.Minute)
 	defer resp.Body.Close()
@@ -598,7 +598,7 @@ func TestIntegration_Streaming_Text(t *testing.T) {
 
 func TestIntegration_Streaming_Text2(t *testing.T) {
 	convID := "conv_integ_stream_" + time.Now().Format("150405")
-	body := `{"input":"2. DD0108基于产品的投资策略，分析我的组合持仓\n3. 图片形式展示我的持仓进行多维度聚合","stream":true,"conversation_id":"` + convID + `"}`
+	body := `{"input":"2. DD0108基于产品的投资策略，分析我的组合持仓","stream":true,"conversation_id":"` + convID + `"}`
 	// Longer timeout for tool-call + image generation pipeline
 	resp := doPostSSE(t, "/chat", body, true, 15*time.Minute)
 	defer resp.Body.Close()

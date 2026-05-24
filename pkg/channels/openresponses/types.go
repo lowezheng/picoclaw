@@ -108,21 +108,24 @@ type streamEvent struct {
 
 // -- pendingStream --
 
-const bufSize = 64
-
+// pendingStream is an unbounded event queue. It replaces a fixed-size
+// buffered channel so that producers (streaming LLM callbacks, tool-call
+// interim messages, etc.) never drop events when the consumer is slower.
 type pendingStream struct {
-	events chan streamEvent
+	mu     sync.Mutex
+	cond   *sync.Cond
+	events []streamEvent
 	done   chan struct{}
 	once   sync.Once
-	mu     sync.Mutex
 	closed bool
 }
 
 func newPendingStream() *pendingStream {
-	return &pendingStream{
-		events: make(chan streamEvent, bufSize),
-		done:   make(chan struct{}),
+	s := &pendingStream{
+		done: make(chan struct{}),
 	}
+	s.cond = sync.NewCond(&s.mu)
+	return s
 }
 
 func (s *pendingStream) push(ev streamEvent) bool {
@@ -131,13 +134,47 @@ func (s *pendingStream) push(ev streamEvent) bool {
 		s.mu.Unlock()
 		return false
 	}
+	s.events = append(s.events, ev)
 	s.mu.Unlock()
-	select {
-	case s.events <- ev:
-		return true
-	default:
-		return false
+	s.cond.Signal()
+	return true
+}
+
+// next blocks until an event is available or the stream is closed.
+// The second return value is true when the event is valid.
+func (s *pendingStream) next() (streamEvent, bool) {
+	s.mu.Lock()
+	for len(s.events) == 0 && !s.closed {
+		s.cond.Wait()
 	}
+	if len(s.events) > 0 {
+		ev := s.events[0]
+		s.events = s.events[1:]
+		s.mu.Unlock()
+		return ev, true
+	}
+	s.mu.Unlock()
+	return streamEvent{}, false
+}
+
+// tryNext returns the next event without blocking.
+func (s *pendingStream) tryNext() (streamEvent, bool) {
+	s.mu.Lock()
+	if len(s.events) > 0 {
+		ev := s.events[0]
+		s.events = s.events[1:]
+		s.mu.Unlock()
+		return ev, true
+	}
+	s.mu.Unlock()
+	return streamEvent{}, false
+}
+
+// isClosed returns whether the stream has been closed.
+func (s *pendingStream) isClosed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closed
 }
 
 func (s *pendingStream) close() {
@@ -145,7 +182,7 @@ func (s *pendingStream) close() {
 		s.mu.Lock()
 		s.closed = true
 		s.mu.Unlock()
-		close(s.events)
+		s.cond.Broadcast()
 		close(s.done)
 	})
 }

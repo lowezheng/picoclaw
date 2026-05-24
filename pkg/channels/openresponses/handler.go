@@ -166,20 +166,28 @@ func (c *OpenResponsesChannel) serveCreateResponse(w http.ResponseWriter, r *htt
 
 func (c *OpenResponsesChannel) serveJSON(w http.ResponseWriter, r *http.Request, stream *pendingStream, conversationID string, req CreateResponseRequest) {
 	flusher, ok := w.(http.Flusher)
-	if !ok {
-		<-stream.done
-		resp := c.buildResponse(stream, conversationID, req)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(resp)
-		return
-	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
+	if ok {
+		flusher.Flush()
+	}
+
+	if !ok {
+		<-stream.done
+		resp := c.buildResponse(stream, conversationID, req)
+		resp.Status = "completed"
+		resp.Output = filterNonReasoningItems(resp.Output)
+		writeSSEEvent(w, "response.completed", map[string]any{
+			"type":            "response.completed",
+			"sequence_number": 0,
+			"response":        resp,
+		})
+		fmt.Fprint(w, "data: [DONE]\n\n")
+		return
+	}
 
 	heartbeat := time.NewTicker(5 * time.Second)
 	defer heartbeat.Stop()
@@ -189,11 +197,12 @@ func (c *OpenResponsesChannel) serveJSON(w http.ResponseWriter, r *http.Request,
 		case <-r.Context().Done():
 			return
 		case <-heartbeat.C:
-			fmt.Fprintf(w, ": hb-%s\n\n", time.Now().Format("15:04:05"))
+			fmt.Fprintf(w, ": heartbeat-%s\n\n", time.Now().Format("15:04:05"))
 			flusher.Flush()
 		case <-stream.done:
 			resp := c.buildResponse(stream, conversationID, req)
 			resp.Status = "completed"
+			resp.Output = filterNonReasoningItems(resp.Output)
 			writeSSEEvent(w, "response.completed", map[string]any{
 				"type":            "response.completed",
 				"sequence_number": 0,
@@ -213,6 +222,7 @@ func (c *OpenResponsesChannel) buildResponse(stream *pendingStream, conversation
 
 	var outputItems []ResponseItem
 	var textBuf string
+	var reasoningBuf string
 	var hasActiveTextItem bool
 	var hasActiveReasoningItem bool
 
@@ -231,15 +241,30 @@ func (c *OpenResponsesChannel) buildResponse(stream *pendingStream, conversation
 		hasActiveTextItem = false
 		msgSeq++
 	}
-	clearReasoning := func() {
+	flushReasoning := func() {
+		if !hasActiveReasoningItem {
+			return
+		}
+		outputItems = append(outputItems, ResponseItem{
+			ID:      fmt.Sprintf("%s_%d", msgID, msgSeq),
+			Type:    "reasoning",
+			Status:  "completed",
+			Content: []ContentOutput{{Type: "reasoning_text", Text: reasoningBuf}},
+		})
+		reasoningBuf = ""
 		hasActiveReasoningItem = false
+		msgSeq++
 	}
 
-	for ev := range stream.events {
+	for {
+		ev, ok := stream.next()
+		if !ok {
+			break
+		}
 		switch ev.kind {
 		case eventKindTextDelta:
 			if hasActiveReasoningItem {
-				clearReasoning()
+				flushReasoning()
 			}
 			if !hasActiveTextItem {
 				hasActiveTextItem = true
@@ -248,7 +273,7 @@ func (c *OpenResponsesChannel) buildResponse(stream *pendingStream, conversation
 
 		case eventKindText:
 			flushText()
-			clearReasoning()
+			flushReasoning()
 			outputItems = append(outputItems, ResponseItem{
 				ID:      fmt.Sprintf("%s_%d", msgID, msgSeq),
 				Type:    "message",
@@ -260,18 +285,14 @@ func (c *OpenResponsesChannel) buildResponse(stream *pendingStream, conversation
 
 		case eventKindReasoning:
 			flushText()
-			outputItems = append(outputItems, ResponseItem{
-				ID:      fmt.Sprintf("%s_%d", msgID, msgSeq),
-				Type:    "reasoning",
-				Status:  "completed",
-				Content: []ContentOutput{{Type: "reasoning_text", Text: ev.content}},
-			})
-			msgSeq++
-			hasActiveReasoningItem = false
+			if !hasActiveReasoningItem {
+				hasActiveReasoningItem = true
+			}
+			reasoningBuf += ev.content
 
 		case eventKindImage:
 			flushText()
-			clearReasoning()
+			flushReasoning()
 			outputItems = append(outputItems, ResponseItem{
 				ID:      fmt.Sprintf("%s_%d", msgID, msgSeq),
 				Type:    "message",
@@ -283,7 +304,7 @@ func (c *OpenResponsesChannel) buildResponse(stream *pendingStream, conversation
 
 		case eventKindFunctionCall:
 			flushText()
-			clearReasoning()
+			flushReasoning()
 			outputItems = append(outputItems, ResponseItem{
 				ID:     fmt.Sprintf("%s_%d", msgID, msgSeq),
 				Type:   "function_call",
@@ -297,14 +318,16 @@ func (c *OpenResponsesChannel) buildResponse(stream *pendingStream, conversation
 
 		case eventKindTurnEnd:
 			flushText()
-			clearReasoning()
+			flushReasoning()
 		}
 	}
 
 	if hasActiveTextItem {
 		flushText()
 	}
-	clearReasoning()
+	if hasActiveReasoningItem {
+		flushReasoning()
+	}
 
 	if len(outputItems) == 0 {
 		outputItems = append(outputItems, ResponseItem{
@@ -327,6 +350,26 @@ func (c *OpenResponsesChannel) buildResponse(stream *pendingStream, conversation
 		PreviousResponseID: req.PreviousResponseID,
 		Usage:              Usage{0, 0},
 	}
+}
+
+// filterNonReasoningItems removes reasoning and function_call items from the output,
+// keeping only message types. If no message items remain, a fallback empty message is returned.
+func filterNonReasoningItems(items []ResponseItem) []ResponseItem {
+	filtered := make([]ResponseItem, 0, len(items))
+	for _, item := range items {
+		if item.Type == "message" {
+			filtered = append(filtered, item)
+		}
+	}
+	if len(filtered) == 0 {
+		filtered = append(filtered, ResponseItem{
+			Type:    "message",
+			Status:  "completed",
+			Role:    "assistant",
+			Content: []ContentOutput{{Type: "output_text", Text: ""}},
+		})
+	}
+	return filtered
 }
 
 func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Request, stream *pendingStream, conversationID string, req CreateResponseRequest) {
@@ -381,21 +424,109 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 		case <-heartbeat.C:
 			fmt.Fprintf(w, ": heartbeat-%s\n\n", time.Now().Format("15:04:05"))
 			flusher.Flush()
-		case ev, more := <-stream.events:
-			if !more {
-				completed := c.buildResponse(stream, conversationID, req)
-				completed.Status = "completed"
-				for i := range completed.Output {
-					completed.Output[i] = stripContentsFromItem(completed.Output[i])
+		case <-stream.done:
+			// Drain any remaining events before sending completed
+			for {
+				ev, ok := stream.tryNext()
+				if !ok {
+					break
 				}
-				emitSSE(w, &seqNum, "response.completed", map[string]any{
-					"type":            "response.completed",
-					"sequence_number": seqNum,
-					"response":        completed,
-				})
-				fmt.Fprint(w, "data: [DONE]\n\n")
+				// Process remaining events (same logic as below)
+				rc := http.NewResponseController(w)
+				rc.SetWriteDeadline(time.Now().Add(10 * time.Minute))
+				switch ev.kind {
+				case eventKindTextDelta:
+					if hasActiveReasoningItem {
+						emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq)
+						emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &reasoningStart, "LLM思考")
+						hasActiveReasoningItem = false
+					}
+					if !hasActiveTextItem {
+						hasActiveTextItem = true
+						textStart = time.Now()
+						currentTextItemSeq = msgSeq
+						emitTextItemStart(w, flusher, msgID, &seqNum, &msgSeq)
+					}
+					emitTextItemDelta(w, flusher, msgID, &seqNum, currentTextItemSeq, ev.content)
+				case eventKindReasoning:
+					if hasActiveTextItem {
+						emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq)
+						emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &textStart, "LLM推理")
+						hasActiveTextItem = false
+					}
+					if !hasActiveReasoningItem {
+						hasActiveReasoningItem = true
+						reasoningStart = time.Now()
+						currentReasoningItemSeq = msgSeq
+						emitReasoningItemStart(w, flusher, msgID, &seqNum, &msgSeq)
+					}
+					emitReasoningItemDelta(w, flusher, msgID, &seqNum, currentReasoningItemSeq, ev.content)
+				case eventKindImage:
+					if hasActiveTextItem {
+						emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq)
+						emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &textStart, "LLM推理")
+						hasActiveTextItem = false
+					}
+					if hasActiveReasoningItem {
+						emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq)
+						emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &reasoningStart, "LLM思考")
+						hasActiveReasoningItem = false
+					}
+					emitImageItem(w, flusher, msgID, &seqNum, &msgSeq, ev.imageURL)
+				case eventKindFunctionCall:
+					funcCallStart = time.Now()
+					if hasActiveTextItem {
+						emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq)
+						emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &textStart, "LLM推理")
+						hasActiveTextItem = false
+					}
+					if hasActiveReasoningItem {
+						emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq)
+						emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &reasoningStart, "LLM思考")
+						hasActiveReasoningItem = false
+					}
+					emitFunctionCallItem(w, flusher, msgID, &seqNum, msgSeq, ev)
+					if !funcCallStart.IsZero() {
+						durMs := time.Since(funcCallStart).Milliseconds()
+						funcCallStart = time.Time{}
+						emitDurationItemWithMS(w, flusher, msgID, &seqNum, &msgSeq, durMs, "Tool调用")
+					} else {
+						msgSeq++
+					}
+				case eventKindTurnEnd:
+					if hasActiveTextItem {
+						emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq)
+						emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &textStart, "LLM推理")
+						hasActiveTextItem = false
+					}
+					if hasActiveReasoningItem {
+						emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq)
+						emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &reasoningStart, "LLM思考")
+						hasActiveReasoningItem = false
+					}
+				}
 				flusher.Flush()
-				return
+			}
+			completed := c.buildResponse(stream, conversationID, req)
+			completed.Status = "completed"
+			for i := range completed.Output {
+				completed.Output[i] = stripContentsFromItem(completed.Output[i])
+			}
+			emitSSE(w, &seqNum, "response.completed", map[string]any{
+				"type":            "response.completed",
+				"sequence_number": seqNum,
+				"response":        completed,
+			})
+			fmt.Fprint(w, "data: [DONE]\n\n")
+			flusher.Flush()
+			return
+		default:
+			ev, ok := stream.tryNext()
+			if !ok {
+				// No events yet; brief sleep to avoid busy-looping
+				// until the next heartbeat or stream closure.
+				time.Sleep(10 * time.Millisecond)
+				continue
 			}
 
 			rc := http.NewResponseController(w)

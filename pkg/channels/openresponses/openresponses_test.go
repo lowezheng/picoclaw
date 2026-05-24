@@ -23,15 +23,28 @@ func TestPendingStream_PushAndClose(t *testing.T) {
 	}
 }
 
-func TestPendingStream_BufferFull(t *testing.T) {
+func TestPendingStream_Unbounded(t *testing.T) {
 	s := newPendingStream()
-	for i := 0; i < bufSize; i++ {
+	// Push many more events than the old fixed buffer size (64)
+	for i := 0; i < 5000; i++ {
 		if !s.push(streamEvent{kind: eventKindText, content: "x"}) {
 			t.Fatalf("expected push %d to succeed", i)
 		}
 	}
-	if s.push(streamEvent{kind: eventKindText, content: "overflow"}) {
-		t.Fatal("expected push to fail when buffer full")
+	// Verify all events can be drained
+	count := 0
+	for {
+		ev, ok := s.tryNext()
+		if !ok {
+			break
+		}
+		if ev.content != "x" {
+			t.Fatalf("unexpected event content: %q", ev.content)
+		}
+		count++
+	}
+	if count != 5000 {
+		t.Fatalf("expected 5000 events, got %d", count)
 	}
 }
 
@@ -236,7 +249,7 @@ func TestSend_TextEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ev := <-st.stream.events
+	ev, _ := st.stream.next()
 	if ev.kind != eventKindText || ev.content != "hello" {
 		t.Fatalf("expected text event, got %+v", ev)
 	}
@@ -261,7 +274,7 @@ func TestSend_ThoughtEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ev := <-st.stream.events
+	ev, _ := st.stream.next()
 	if ev.kind != eventKindReasoning || ev.content != "thinking..." {
 		t.Fatalf("expected reasoning event, got %+v", ev)
 	}
@@ -291,7 +304,7 @@ func TestSend_FunctionCallEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ev := <-st.stream.events
+	ev, _ := st.stream.next()
 	if ev.kind != eventKindFunctionCall || ev.callID != "call_1" || ev.name != "read_file" {
 		t.Fatalf("expected function_call event, got %+v", ev)
 	}
@@ -317,14 +330,13 @@ func TestSend_TurnEndEvent(t *testing.T) {
 	}
 
 	// Read turn_end event
-	ev := <-st.stream.events
+	ev, _ := st.stream.next()
 	if ev.kind != eventKindTurnEnd {
 		t.Fatalf("expected turn_end event, got %+v", ev)
 	}
 
 	// stream should be closed
-	_, more := <-st.stream.events
-	if more {
+	if !st.stream.isClosed() {
 		t.Fatal("expected stream to be closed")
 	}
 
@@ -365,19 +377,18 @@ func TestSend_FinalOutboundTriggersTurnEnd(t *testing.T) {
 	}
 
 	// Should get text event followed by turn_end
-	ev1 := <-st.stream.events
+	ev1, _ := st.stream.next()
 	if ev1.kind != eventKindText || ev1.content != "Final answer" {
 		t.Fatalf("expected text event, got %+v", ev1)
 	}
 
-	ev2 := <-st.stream.events
+	ev2, _ := st.stream.next()
 	if ev2.kind != eventKindTurnEnd {
 		t.Fatalf("expected turn_end event, got %+v", ev2)
 	}
 
 	// stream should be closed after turn_end
-	_, more := <-st.stream.events
-	if more {
+	if !st.stream.isClosed() {
 		t.Fatal("expected stream to be closed after turn_end")
 	}
 }
@@ -405,7 +416,7 @@ func TestSend_StreamerFiltersNonAllowedKinds(t *testing.T) {
 
 	// No event should be pushed (buffer empty)
 	select {
-	case <-st.stream.events:
+	case <-st.stream.done:
 		t.Fatal("expected no event for filtered kind")
 	case <-time.After(100 * time.Millisecond):
 		// OK
@@ -438,7 +449,7 @@ func TestSend_StreamerAllowsAllowedKinds(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ev := <-st.stream.events
+	ev, _ := st.stream.next()
 	if ev.kind != eventKindFunctionCall {
 		t.Fatalf("expected function_call event, got %+v", ev)
 	}
@@ -451,13 +462,13 @@ func TestStreamer_Update(t *testing.T) {
 	streamer := &openResponsesStreamer{stream: s}
 
 	streamer.Update(context.Background(), "Hello")
-	ev := <-s.events
+	ev, _ := s.next()
 	if ev.kind != eventKindTextDelta || ev.content != "Hello" {
 		t.Fatalf("expected Hello delta, got %+v", ev)
 	}
 
 	streamer.Update(context.Background(), "Hello World")
-	ev = <-s.events
+	ev, _ = s.next()
 	if ev.kind != eventKindTextDelta || ev.content != " World" {
 		t.Fatalf("expected ' World' delta, got %+v", ev)
 	}
@@ -468,13 +479,13 @@ func TestStreamer_UpdateReasoning(t *testing.T) {
 	streamer := &openResponsesStreamer{stream: s}
 
 	streamer.UpdateReasoning(context.Background(), "Let me think")
-	ev := <-s.events
+	ev, _ := s.next()
 	if ev.kind != eventKindReasoning || ev.content != "Let me think" {
 		t.Fatalf("expected reasoning, got %+v", ev)
 	}
 
 	streamer.UpdateReasoning(context.Background(), "Let me think about this")
-	ev = <-s.events
+	ev, _ = s.next()
 	if ev.kind != eventKindReasoning || ev.content != " about this" {
 		t.Fatalf("expected ' about this' delta, got %+v", ev)
 	}
@@ -485,11 +496,11 @@ func TestStreamer_Finalize(t *testing.T) {
 	streamer := &openResponsesStreamer{stream: s}
 
 	streamer.Finalize(context.Background(), "done")
-	ev := <-s.events
+	ev, _ := s.next()
 	if ev.kind != eventKindText || ev.content != "done" {
 		t.Fatalf("expected text event with 'done', got %+v", ev)
 	}
-	ev = <-s.events
+	ev, _ = s.next()
 	if ev.kind != eventKindTurnEnd {
 		t.Fatalf("expected turn_end, got %+v", ev)
 	}
@@ -513,7 +524,7 @@ func TestStreamer_Cancel(t *testing.T) {
 	streamer.Update(context.Background(), "hello")
 	streamer.Cancel(context.Background())
 	// Drain the event pushed by Update
-	<-s.events
+	s.next()
 	select {
 	case <-s.done:
 		t.Fatal("expected stream to stay open after Cancel even with streamed content")
@@ -523,12 +534,11 @@ func TestStreamer_Cancel(t *testing.T) {
 	// Finalize is what actually closes the stream
 	streamer.Finalize(context.Background(), "done")
 	// Drain the text event pushed by Finalize (lastContent was "", content="done")
-	<-s.events
+	s.next()
 	// Drain the turn_end event pushed by Finalize
-	<-s.events
-	// Now the channel should be closed
-	_, more := <-s.events
-	if more {
+	s.next()
+	// Now the stream should be closed
+	if !s.isClosed() {
 		t.Fatal("expected stream to be closed after Finalize")
 	}
 }
@@ -574,8 +584,7 @@ func TestChannel_StopClosesConversations(t *testing.T) {
 
 	ch.Stop(context.Background())
 
-	_, more := <-st.stream.events
-	if more {
+	if !st.stream.isClosed() {
 		t.Fatal("expected stream to be closed")
 	}
 }
