@@ -1,128 +1,153 @@
-import { IconChevronDown, IconChevronUp, IconTerminal, IconCheck, IconCopy } from "@tabler/icons-react"
+import {
+  IconCheck,
+  IconChevronDown,
+  IconCopy,
+  IconTool,
+} from "@tabler/icons-react"
+import hljs from "highlight.js/lib/core"
+import json from "highlight.js/lib/languages/json"
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import { Button } from "@/components/ui/button"
-import { formatMessageTime } from "@/components/openresponses-chat/utils"
 import { cn } from "@/components/openresponses-chat/lib/utils"
-import type { ChatAttachment } from "@/store/openresponses-chat"
+
+hljs.registerLanguage("json", json)
 
 interface ToolCallMessageProps {
   toolName: string
   args?: string
   output?: string
   timestamp?: string | number
-  attachments?: ChatAttachment[]
+}
+
+function highlightJson(code: string): string | null {
+  try {
+    return hljs.highlight(code, { language: "json" }).value
+  } catch {
+    return null
+  }
 }
 
 export function ToolCallMessage({
   toolName,
   args,
   output,
-  timestamp = "",
-  attachments = [],
 }: ToolCallMessageProps) {
   const { t } = useTranslation()
-  const [isExpanded, setIsExpanded] = useState(false)
+  const [isExpanded, setIsExpanded] = useState(true)
   const [isCopied, setIsCopied] = useState(false)
-  const formattedTimestamp =
-    timestamp !== "" ? formatMessageTime(timestamp) : ""
 
   const handleCopy = () => {
-    const textToCopy = [toolName, args, output].filter(Boolean).join("\n\n")
+    const textToCopy = args || ""
     navigator.clipboard.writeText(textToCopy).then(() => {
       setIsCopied(true)
       setTimeout(() => setIsCopied(false), 2000)
     })
   }
 
+  const formattedArgs = args ? (() => {
+    try {
+      const parsed = JSON.parse(args)
+      return JSON.stringify(parsed, null, 2)
+    } catch {
+      return args
+    }
+  })() : ""
+
+  const highlightedHtml = formattedArgs ? highlightJson(formattedArgs) : null
+
   return (
     <div className="group flex w-full flex-col gap-1.5">
-      <div className="text-muted-foreground flex items-center justify-between gap-2 px-1 text-xs opacity-70">
-        <div className="flex items-center gap-2">
-          <span>PicoClaw</span>
-          <span className="inline-flex items-center gap-1 rounded-full border border-slate-300/80 bg-slate-100/80 px-2 py-0.5 text-[11px] font-medium text-slate-700 dark:border-slate-500/40 dark:bg-slate-500/15 dark:text-slate-200">
-            <IconTerminal className="size-3" />
-            <span>{t("chat.toolCallLabel", { tool: toolName })}</span>
-          </span>
-          {formattedTimestamp && (
-            <>
-              <span className="opacity-50">•</span>
-              <span>{formattedTimestamp}</span>
-            </>
+      {/* Tool call card */}
+      <div
+        className={cn(
+          "relative overflow-hidden rounded-xl border",
+          "border-orange-200/80 bg-orange-50/40",
+          "dark:border-orange-500/25 dark:bg-orange-500/8",
+        )}
+      >
+        {/* Header bar */}
+        <div
+          className={cn(
+            "flex items-center justify-between gap-2 border-b px-3 py-2",
+            "border-orange-200/60 bg-orange-100/50",
+            "dark:border-orange-500/20 dark:bg-orange-500/10",
           )}
-        </div>
-      </div>
-
-      <div className="relative overflow-hidden rounded-xl border border-slate-200/90 bg-slate-50/70 dark:border-slate-500/35 dark:bg-slate-500/10">
-        {/* Tool args / header */}
-        {args && (
-          <div className="border-b border-slate-200/60 px-3 py-2 dark:border-slate-500/20">
-            <button
-              onClick={() => setIsExpanded(!isExpanded)}
-              className="flex w-full items-center justify-between gap-2"
+        >
+          <div className="flex items-center gap-2">
+            <IconTool className="size-3.5 text-orange-600 dark:text-orange-400" />
+            <span className="text-[13px] font-semibold text-orange-800 dark:text-orange-300">
+              {toolName}
+            </span>
+          </div>
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              className="h-7 text-orange-700 hover:bg-orange-200/60 hover:text-orange-900 dark:text-orange-300 dark:hover:bg-orange-500/20 dark:hover:text-orange-100"
+              onClick={handleCopy}
             >
-              <code className="text-[13px] font-mono text-slate-800 dark:text-slate-100">
-                {args.length > 80 ? args.slice(0, 80) + "..." : args}
-              </code>
-              <span className="shrink-0 text-slate-500 dark:text-slate-400">
-                {isExpanded ? (
-                  <IconChevronUp className="size-4" />
-                ) : (
-                  <IconChevronDown className="size-4" />
-                )}
+              {isCopied ? (
+                <IconCheck className="size-3.5 text-green-500" />
+              ) : (
+                <IconCopy className="size-3.5" />
+              )}
+              <span className="hidden sm:inline text-xs">
+                {isCopied ? t("chat.copiedLabel") : t("chat.copyCode")}
               </span>
-            </button>
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              className="h-7 text-orange-700 hover:bg-orange-200/60 hover:text-orange-900 dark:text-orange-300 dark:hover:bg-orange-500/20 dark:hover:text-orange-100"
+              onClick={() => setIsExpanded((v) => !v)}
+            >
+              <IconChevronDown
+                className={cn(
+                  "size-3.5 transition-transform duration-200",
+                  isExpanded && "rotate-180",
+                )}
+              />
+              <span className="hidden sm:inline text-xs">
+                {isExpanded ? t("chat.collapseCode") : t("chat.expandCode")}
+              </span>
+            </Button>
+          </div>
+        </div>
+
+        {/* Code block */}
+        {isExpanded && (
+          <div className="overflow-x-auto">
+            <pre className="m-0 bg-[#f6f8fa] px-4 py-3 font-mono text-[13px] leading-6 dark:bg-[#0d1117]">
+              {highlightedHtml ? (
+                <code
+                  className="hljs language-json"
+                  dangerouslySetInnerHTML={{ __html: highlightedHtml }}
+                />
+              ) : (
+                <code className="language-json">
+                  {formattedArgs}
+                </code>
+              )}
+            </pre>
           </div>
         )}
 
         {/* Output */}
         {output && (
-          <div
-            className={cn(
-              "overflow-hidden transition-all",
-              isExpanded ? "max-h-[600px]" : "max-h-[120px]",
-            )}
-          >
-            <pre className="whitespace-pre-wrap break-words p-3 text-[13px] leading-relaxed text-slate-800 dark:text-slate-100">
+          <div className="border-t border-orange-200/60 px-3 py-2 dark:border-orange-500/20">
+            <div className="text-muted-foreground/55 text-[11px] font-medium tracking-wide uppercase">
+              {t("chat.toolCallOutputLabel")}
+            </div>
+            <pre className="mt-1.5 whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-slate-700 dark:text-slate-300">
               {output}
             </pre>
           </div>
         )}
-
-        {/* Gradient fade when collapsed */}
-        {!isExpanded && output && output.length > 200 && (
-          <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-slate-50/70 to-transparent dark:from-slate-500/10" />
-        )}
-
-        {/* Copy button */}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="absolute top-2 right-2 h-7 w-7 opacity-0 transition-opacity group-hover:opacity-100 bg-slate-100/70 hover:bg-slate-200/80 dark:bg-slate-500/20 dark:hover:bg-slate-400/30"
-          onClick={handleCopy}
-        >
-          {isCopied ? (
-            <IconCheck className="h-4 w-4 text-green-500" />
-          ) : (
-            <IconCopy className="text-muted-foreground h-4 w-4" />
-          )}
-        </Button>
       </div>
-
-      {attachments.length > 0 && (
-        <div className="flex flex-wrap gap-2 px-1">
-          {attachments.map((attachment, index) => (
-            <img
-              key={`${attachment.url}-${index}`}
-              src={attachment.url}
-              alt="Generated image"
-              className="max-h-72 max-w-full rounded-lg object-cover shadow-sm"
-            />
-          ))}
-        </div>
-      )}
     </div>
   )
 }
-

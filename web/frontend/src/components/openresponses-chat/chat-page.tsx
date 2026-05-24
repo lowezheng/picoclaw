@@ -123,6 +123,7 @@ export function OpenResponsesChatPage() {
     loadError,
     loadErrorMessage,
     observerRef,
+    loadSessions,
     handleDeleteSession,
   } = useOpenResponsesSessionHistory({
     activeSessionId,
@@ -254,7 +255,11 @@ export function OpenResponsesChatPage() {
             loadErrorMessage={loadErrorMessage}
             observerRef={observerRef}
             activeSessionId={activeSessionId}
-            onOpenChange={() => {}}
+            onOpenChange={(open) => {
+              if (open) {
+                void loadSessions(true)
+              }
+            }}
             onSwitchSession={switchOpenResponsesSession}
             onDeleteSession={handleDeleteSession}
           />

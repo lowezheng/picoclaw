@@ -1,6 +1,7 @@
 import { toast } from "sonner"
 
 import { streamOpenResponses, type SSEEvent } from "@/api/openresponses-chat"
+import { loadSessionMessages } from "@/features/openresponses-chat/history"
 import {
   generateNewOpenResponsesSessionId,
   getOpenResponsesChatState,
@@ -270,7 +271,19 @@ export function newOpenResponsesSession() {
 
 export async function switchOpenResponsesSession(sessionId: string) {
   cancelOpenResponsesStream()
-  setOpenResponsesSessionId(sessionId)
+  try {
+    const historyMessages = await loadSessionMessages(sessionId)
+    setOpenResponsesSessionId(sessionId)
+    updateOpenResponsesChatStore({
+      messages: historyMessages,
+      isTyping: false,
+      connectionState: "completed",
+    })
+  } catch (error) {
+    console.error("Failed to load session history:", error)
+    toast.error("Failed to load session history")
+    setOpenResponsesSessionId(sessionId)
+  }
 }
 
 export function initializeOpenResponsesChatStore() {

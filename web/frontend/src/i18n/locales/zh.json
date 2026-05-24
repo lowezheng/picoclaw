@@ -64,6 +64,7 @@
     "toolCallExplanationLabel": "调用提示",
     "toolCallFunctionLabel": "调用摘要",
     "toolCallArgumentsLabel": "参数",
+    "toolCallOutputLabel": "输出结果",
     "showAssistantDetails": "思考与工具调用",
     "assistantDetailVisibility": {
       "none": "均不展示",

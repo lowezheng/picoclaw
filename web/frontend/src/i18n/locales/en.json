@@ -64,6 +64,7 @@
     "toolCallExplanationLabel": "Call note",
     "toolCallFunctionLabel": "Call summary",
     "toolCallArgumentsLabel": "Arguments",
+    "toolCallOutputLabel": "Output",
     "showAssistantDetails": "Reasoning and tool calls",
     "assistantDetailVisibility": {
       "none": "Show neither",

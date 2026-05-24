@@ -7,11 +7,6 @@ import (
 )
 
 func (c *OpenResponsesChannel) handleListSessions(w http.ResponseWriter, r *http.Request) {
-	if !c.checkAuth(r) {
-		writeError(w, http.StatusUnauthorized, "invalid_request", "", "Invalid token")
-		return
-	}
-
 	offsetStr := r.URL.Query().Get("offset")
 	limitStr := r.URL.Query().Get("limit")
 	offset := 0
@@ -31,10 +26,6 @@ func (c *OpenResponsesChannel) handleListSessions(w http.ResponseWriter, r *http
 }
 
 func (c *OpenResponsesChannel) handleSessionDetail(w http.ResponseWriter, r *http.Request, id string) {
-	if !c.checkAuth(r) {
-		writeError(w, http.StatusUnauthorized, "invalid_request", "", "Invalid token")
-		return
-	}
 	switch r.Method {
 	case http.MethodGet:
 		session := c.getSession(id)

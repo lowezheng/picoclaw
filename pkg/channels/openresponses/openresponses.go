@@ -28,6 +28,7 @@ type OpenResponsesChannel struct {
 	*channels.BaseChannel
 	bc              *config.Channel
 	cfg             *config.OpenResponsesSettings
+	workspace       string
 	convMu          sync.RWMutex
 	convs           map[string]*conversationState
 	ctx             context.Context
@@ -36,7 +37,7 @@ type OpenResponsesChannel struct {
 	sessionRegistry map[string]*sessionRegistryEntry
 }
 
-func NewOpenResponsesChannel(bc *config.Channel, cfg *config.OpenResponsesSettings, b *bus.MessageBus) (*OpenResponsesChannel, error) {
+func NewOpenResponsesChannel(bc *config.Channel, cfg *config.OpenResponsesSettings, b *bus.MessageBus, workspace string) (*OpenResponsesChannel, error) {
 	base := channels.NewBaseChannel(
 		bc.Name(),
 		cfg,
@@ -48,6 +49,7 @@ func NewOpenResponsesChannel(bc *config.Channel, cfg *config.OpenResponsesSettin
 		BaseChannel:     base,
 		bc:              bc,
 		cfg:             cfg,
+		workspace:       workspace,
 		convs:           make(map[string]*conversationState),
 		sessionRegistry: make(map[string]*sessionRegistryEntry),
 	}

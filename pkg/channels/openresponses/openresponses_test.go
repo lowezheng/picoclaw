@@ -675,6 +675,7 @@ func TestSendMedia_NoMediaStore(t *testing.T) {
 
 func TestSessionList_Empty(t *testing.T) {
 	ch := newTestChannel()
+	ch.workspace = t.TempDir()
 	items := ch.listSessions(0, 20)
 	if len(items) != 0 {
 		t.Fatalf("expected empty list, got %d items", len(items))
@@ -683,6 +684,7 @@ func TestSessionList_Empty(t *testing.T) {
 
 func TestGetSession_NotFound(t *testing.T) {
 	ch := newTestChannel()
+	ch.workspace = t.TempDir()
 	result := ch.getSession("nonexistent")
 	if result != nil {
 		t.Fatalf("expected nil, got %+v", result)
@@ -691,6 +693,7 @@ func TestGetSession_NotFound(t *testing.T) {
 
 func TestDeleteSession_NotFound(t *testing.T) {
 	ch := newTestChannel()
+	ch.workspace = t.TempDir()
 	if ch.deleteSession("nonexistent") {
 		t.Fatal("expected false for nonexistent session")
 	}

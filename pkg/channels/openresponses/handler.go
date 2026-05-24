@@ -412,7 +412,7 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 	var hasActiveReasoningItem bool
 	var currentTextItemSeq int
 	var currentReasoningItemSeq int
-	var textStart, reasoningStart, funcCallStart time.Time
+	var textStart, reasoningStart time.Time
 
 	heartbeat := time.NewTicker(5 * time.Second)
 	defer heartbeat.Stop()
@@ -474,7 +474,6 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 					}
 					emitImageItem(w, flusher, msgID, &seqNum, &msgSeq, ev.imageURL)
 				case eventKindFunctionCall:
-					funcCallStart = time.Now()
 					if hasActiveTextItem {
 						emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq)
 						emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &textStart, "LLM推理")
@@ -486,13 +485,7 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 						hasActiveReasoningItem = false
 					}
 					emitFunctionCallItem(w, flusher, msgID, &seqNum, msgSeq, ev)
-					if !funcCallStart.IsZero() {
-						durMs := time.Since(funcCallStart).Milliseconds()
-						funcCallStart = time.Time{}
-						emitDurationItemWithMS(w, flusher, msgID, &seqNum, &msgSeq, durMs, "Tool调用")
-					} else {
-						msgSeq++
-					}
+					msgSeq++
 				case eventKindTurnEnd:
 					if hasActiveTextItem {
 						emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq)
@@ -575,7 +568,6 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 				emitImageItem(w, flusher, msgID, &seqNum, &msgSeq, ev.imageURL)
 
 			case eventKindFunctionCall:
-				funcCallStart = time.Now()
 				if hasActiveTextItem {
 					emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq)
 					emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &textStart, "LLM推理")
@@ -587,13 +579,7 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 					hasActiveReasoningItem = false
 				}
 				emitFunctionCallItem(w, flusher, msgID, &seqNum, msgSeq, ev)
-				if !funcCallStart.IsZero() {
-					durMs := time.Since(funcCallStart).Milliseconds()
-					funcCallStart = time.Time{}
-					emitDurationItemWithMS(w, flusher, msgID, &seqNum, &msgSeq, durMs, "Tool调用")
-				} else {
-					msgSeq++
-				}
+				msgSeq++
 
 			case eventKindTurnEnd:
 				if hasActiveTextItem {

@@ -456,12 +456,6 @@ func TestServeStream_FunctionCallSequence(t *testing.T) {
 		"response.function_call_arguments.done",
 		"response.content_part.done",
 		"response.output_item.done",               // function_call done
-		"response.output_item.added",              // function call duration item
-		"response.content_part.added",
-		"response.output_text.delta",              // function call duration
-		"response.output_text.done",
-		"response.content_part.done",
-		"response.output_item.done",               // function call duration done
 		"response.completed",
 	})
 
@@ -482,8 +476,8 @@ func TestServeStream_FunctionCallSequence(t *testing.T) {
 		}
 	}
 
-	// Verify duration text in deltas
-	var foundTextDuration, foundFuncDuration bool
+	// Verify duration text in deltas (only LLM推理, no Tool调用)
+	var foundTextDuration bool
 	for _, ev := range events {
 		if ev.Event == "response.output_text.delta" {
 			var payload map[string]any
@@ -493,16 +487,13 @@ func TestServeStream_FunctionCallSequence(t *testing.T) {
 					foundTextDuration = true
 				}
 				if strings.Contains(d, "Tool调用耗时") {
-					foundFuncDuration = true
+					t.Errorf("unexpected Tool调用耗时 in delta: %q", d)
 				}
 			}
 		}
 	}
 	if !foundTextDuration {
 		t.Errorf("expected text duration delta")
-	}
-	if !foundFuncDuration {
-		t.Errorf("expected function call duration delta")
 	}
 }
 
