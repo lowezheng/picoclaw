@@ -1125,7 +1125,11 @@ func (m *Manager) registerHTTPHandlersLocked() {
 // single channel onto m.mux.
 func (m *Manager) registerChannelHTTPHandler(name string, ch Channel) {
 	if wh, ok := ch.(WebhookHandler); ok {
-		m.mux.Handle(wh.WebhookPath(), wh)
+		path := wh.WebhookPath()
+		m.mux.Handle(path, wh)
+		if strings.HasSuffix(path, "/") && len(path) > 1 {
+			m.mux.Handle(strings.TrimSuffix(path, "/"), wh)
+		}
 		m.publishChannelEvent(
 			runtimeevents.KindChannelWebhookRegistered,
 			name,
@@ -1151,7 +1155,11 @@ func (m *Manager) registerChannelHTTPHandler(name string, ch Channel) {
 // single channel from m.mux.
 func (m *Manager) unregisterChannelHTTPHandler(name string, ch Channel) {
 	if wh, ok := ch.(WebhookHandler); ok {
-		m.mux.Unhandle(wh.WebhookPath())
+		path := wh.WebhookPath()
+		m.mux.Unhandle(path)
+		if strings.HasSuffix(path, "/") && len(path) > 1 {
+			m.mux.Unhandle(strings.TrimSuffix(path, "/"))
+		}
 		m.publishChannelEvent(
 			runtimeevents.KindChannelWebhookUnregistered,
 			name,
