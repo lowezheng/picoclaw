@@ -27,11 +27,11 @@ func (c *OpenResponsesChannel) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	base := c.WebhookPath()                      // "/v1/responses/"
-	baseNoSlash := strings.TrimSuffix(base, "/") // "/v1/responses"
-	chatPath := baseNoSlash + "/chat"            // "/v1/responses/chat"
-	sessionsBase := baseNoSlash + "/sessions"    // "/v1/responses/sessions"
-	sessionsBaseSlash := sessionsBase + "/"      // "/v1/responses/sessions/"
+	base := c.WebhookPath()
+	baseNoSlash := strings.TrimSuffix(base, "/")
+	chatPath := baseNoSlash + "/chat"
+	sessionsBase := baseNoSlash + "/sessions"
+	sessionsBaseSlash := sessionsBase + "/"
 	path := r.URL.Path
 
 	switch {
@@ -108,7 +108,6 @@ func (c *OpenResponsesChannel) serveCreateResponse(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Handle file uploads
 	var imageMedia []string
 	var filePaths []string
 	for _, m := range mediaParts {
@@ -165,19 +164,48 @@ func (c *OpenResponsesChannel) serveCreateResponse(w http.ResponseWriter, r *htt
 	}
 }
 
-// serveJSON waits for the turn to complete and returns a single JSON Response.
 func (c *OpenResponsesChannel) serveJSON(w http.ResponseWriter, r *http.Request, stream *pendingStream, conversationID string, req CreateResponseRequest) {
-	<-stream.done
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		<-stream.done
+		resp := c.buildResponse(stream, conversationID, req)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(resp)
+		return
+	}
 
-	resp := c.buildResponse(stream, conversationID, req)
-
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(resp)
+	flusher.Flush()
+
+	heartbeat := time.NewTicker(5 * time.Second)
+	defer heartbeat.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-heartbeat.C:
+			fmt.Fprintf(w, ": hb-%s\n\n", time.Now().Format("15:04:05"))
+			flusher.Flush()
+		case <-stream.done:
+			resp := c.buildResponse(stream, conversationID, req)
+			resp.Status = "completed"
+			writeSSEEvent(w, "response.completed", map[string]any{
+				"type":            "response.completed",
+				"sequence_number": 0,
+				"response":        resp,
+			})
+			fmt.Fprint(w, "data: [DONE]\n\n")
+			flusher.Flush()
+			return
+		}
+	}
 }
 
-// buildResponse drains the pendingStream and assembles a Response.
-// This is used for both streaming (final) and non-streaming responses.
 func (c *OpenResponsesChannel) buildResponse(stream *pendingStream, conversationID string, req CreateResponseRequest) Response {
 	respID := "resp_" + conversationID
 	msgID := "msg_" + conversationID
@@ -188,116 +216,75 @@ func (c *OpenResponsesChannel) buildResponse(stream *pendingStream, conversation
 	var hasActiveTextItem bool
 	var hasActiveReasoningItem bool
 
+	flushText := func() {
+		if !hasActiveTextItem {
+			return
+		}
+		outputItems = append(outputItems, ResponseItem{
+			ID:      fmt.Sprintf("%s_%d", msgID, msgSeq),
+			Type:    "message",
+			Status:  "completed",
+			Role:    "assistant",
+			Content: []ContentOutput{{Type: "output_text", Text: textBuf}},
+		})
+		textBuf = ""
+		hasActiveTextItem = false
+		msgSeq++
+	}
+	clearReasoning := func() {
+		hasActiveReasoningItem = false
+	}
+
 	for ev := range stream.events {
 		switch ev.kind {
 		case eventKindTextDelta:
+			if hasActiveReasoningItem {
+				clearReasoning()
+			}
 			if !hasActiveTextItem {
-				if hasActiveReasoningItem {
-					hasActiveReasoningItem = false
-				}
 				hasActiveTextItem = true
 			}
 			textBuf += ev.content
 
 		case eventKindText:
-			if hasActiveTextItem {
-				item := ResponseItem{
-					ID:      fmt.Sprintf("%s_%d", msgID, msgSeq),
-					Type:    "message",
-					Status:  "completed",
-					Role:    "assistant",
-					Content: []ContentOutput{{Type: "output_text", Text: textBuf}},
-				}
-				outputItems = append(outputItems, item)
-				textBuf = ""
-				hasActiveTextItem = false
-				msgSeq++
-			}
-			if hasActiveReasoningItem {
-				hasActiveReasoningItem = false
-			}
-			item := ResponseItem{
+			flushText()
+			clearReasoning()
+			outputItems = append(outputItems, ResponseItem{
 				ID:      fmt.Sprintf("%s_%d", msgID, msgSeq),
 				Type:    "message",
 				Status:  "completed",
 				Role:    "assistant",
 				Content: []ContentOutput{{Type: "output_text", Text: ev.content}},
-			}
-			outputItems = append(outputItems, item)
+			})
 			msgSeq++
 
 		case eventKindReasoning:
-			if hasActiveTextItem {
-				item := ResponseItem{
-					ID:      fmt.Sprintf("%s_%d", msgID, msgSeq),
-					Type:    "message",
-					Status:  "completed",
-					Role:    "assistant",
-					Content: []ContentOutput{{Type: "output_text", Text: textBuf}},
-				}
-				outputItems = append(outputItems, item)
-				textBuf = ""
-				hasActiveTextItem = false
-				msgSeq++
-			}
-			if !hasActiveReasoningItem {
-				hasActiveReasoningItem = true
-			}
-			item := ResponseItem{
+			flushText()
+			outputItems = append(outputItems, ResponseItem{
 				ID:      fmt.Sprintf("%s_%d", msgID, msgSeq),
 				Type:    "reasoning",
 				Status:  "completed",
 				Content: []ContentOutput{{Type: "reasoning_text", Text: ev.content}},
-			}
-			outputItems = append(outputItems, item)
+			})
 			msgSeq++
 			hasActiveReasoningItem = false
 
 		case eventKindImage:
-			if hasActiveTextItem {
-				item := ResponseItem{
-					ID:      fmt.Sprintf("%s_%d", msgID, msgSeq),
-					Type:    "message",
-					Status:  "completed",
-					Role:    "assistant",
-					Content: []ContentOutput{{Type: "output_text", Text: textBuf}},
-				}
-				outputItems = append(outputItems, item)
-				textBuf = ""
-				hasActiveTextItem = false
-				msgSeq++
-			}
-			if hasActiveReasoningItem {
-				hasActiveReasoningItem = false
-			}
-			item := ResponseItem{
+			flushText()
+			clearReasoning()
+			outputItems = append(outputItems, ResponseItem{
 				ID:      fmt.Sprintf("%s_%d", msgID, msgSeq),
 				Type:    "message",
 				Status:  "completed",
 				Role:    "assistant",
 				Content: []ContentOutput{{Type: "output_image", Text: ev.imageURL}},
-			}
-			outputItems = append(outputItems, item)
+			})
 			msgSeq++
 
 		case eventKindFunctionCall:
-			if hasActiveTextItem {
-				item := ResponseItem{
-					ID:      fmt.Sprintf("%s_%d", msgID, msgSeq),
-					Type:    "message",
-					Status:  "completed",
-					Role:    "assistant",
-					Content: []ContentOutput{{Type: "output_text", Text: textBuf}},
-				}
-				outputItems = append(outputItems, item)
-				textBuf = ""
-				hasActiveTextItem = false
-				msgSeq++
-			}
-			if hasActiveReasoningItem {
-				hasActiveReasoningItem = false
-			}
-			item := ResponseItem{
+			flushText()
+			clearReasoning()
+			outputItems = append(outputItems, ResponseItem{
 				ID:     fmt.Sprintf("%s_%d", msgID, msgSeq),
 				Type:   "function_call",
 				Status: "completed",
@@ -305,46 +292,19 @@ func (c *OpenResponsesChannel) buildResponse(stream *pendingStream, conversation
 					Type: "function_call_arguments",
 					Text: ev.arguments,
 				}},
-			}
-			outputItems = append(outputItems, item)
+			})
 			msgSeq++
 
 		case eventKindTurnEnd:
-			if hasActiveTextItem {
-				item := ResponseItem{
-					ID:      fmt.Sprintf("%s_%d", msgID, msgSeq),
-					Type:    "message",
-					Status:  "completed",
-					Role:    "assistant",
-					Content: []ContentOutput{{Type: "output_text", Text: textBuf}},
-				}
-				outputItems = append(outputItems, item)
-				textBuf = ""
-				hasActiveTextItem = false
-				msgSeq++
-			}
-			if hasActiveReasoningItem {
-				hasActiveReasoningItem = false
-			}
+			flushText()
+			clearReasoning()
 		}
 	}
 
-	// Flush any remaining text that was streamed as deltas but never finalized
-	// with a turn_end (e.g. if the stream was closed prematurely).
 	if hasActiveTextItem {
-		item := ResponseItem{
-			ID:      fmt.Sprintf("%s_%d", msgID, msgSeq),
-			Type:    "message",
-			Status:  "completed",
-			Role:    "assistant",
-			Content: []ContentOutput{{Type: "output_text", Text: textBuf}},
-		}
-		outputItems = append(outputItems, item)
-		msgSeq++
+		flushText()
 	}
-	if hasActiveReasoningItem {
-		hasActiveReasoningItem = false
-	}
+	clearReasoning()
 
 	if len(outputItems) == 0 {
 		outputItems = append(outputItems, ResponseItem{
@@ -369,11 +329,9 @@ func (c *OpenResponsesChannel) buildResponse(stream *pendingStream, conversation
 	}
 }
 
-// serveStream sends SSE events as they arrive from the pendingStream.
 func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Request, stream *pendingStream, conversationID string, req CreateResponseRequest) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		// Clear SSE headers before downgrading to JSON
 		w.Header().Del("Content-Type")
 		w.Header().Del("Cache-Control")
 		w.Header().Del("Connection")
@@ -392,235 +350,26 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 	msgSeq := 0
 	seqNum := 0
 
-	// Send response.in_progress
-	inProgress := Response{
-		ID:             respID,
-		Object:         "response",
-		CreatedAt:      time.Now().Unix(),
-		Status:         "in_progress",
-		Output:         []ResponseItem{},
-		ConversationID: conversationID,
-		Usage:          Usage{0, 0},
-	}
-	writeSSEEvent(w, "response.in_progress", map[string]any{
+	emitSSE(w, &seqNum, "response.in_progress", map[string]any{
 		"type":            "response.in_progress",
 		"sequence_number": seqNum,
-		"response":        inProgress,
+		"response": Response{
+			ID:             respID,
+			Object:         "response",
+			CreatedAt:      time.Now().Unix(),
+			Status:         "in_progress",
+			Output:         []ResponseItem{},
+			ConversationID: conversationID,
+			Usage:          Usage{0, 0},
+		},
 	})
-	seqNum++
 	flusher.Flush()
 
 	var hasActiveTextItem bool
 	var hasActiveReasoningItem bool
 	var currentTextItemSeq int
 	var currentReasoningItemSeq int
-
 	var textStart, reasoningStart, funcCallStart time.Time
-
-	closeTextItem := func() {
-		if !hasActiveTextItem {
-			return
-		}
-		writeSSEEvent(w, "response.output_text.done", map[string]any{
-			"type":            "response.output_text.done",
-			"sequence_number": seqNum,
-			"item_id":         fmt.Sprintf("%s_%d", msgID, currentTextItemSeq),
-			"output_index":    currentTextItemSeq,
-			"content_index":   0,
-		})
-		seqNum++
-		writeSSEEvent(w, "response.content_part.done", map[string]any{
-			"type":            "response.content_part.done",
-			"sequence_number": seqNum,
-			"item_id":         fmt.Sprintf("%s_%d", msgID, currentTextItemSeq),
-			"output_index":    currentTextItemSeq,
-			"content_index":   0,
-			"part":            map[string]string{"type": "output_text"},
-		})
-		seqNum++
-		writeSSEEvent(w, "response.output_item.done", map[string]any{
-			"type":            "response.output_item.done",
-			"sequence_number": seqNum,
-			"output_index":    currentTextItemSeq,
-			"item": map[string]any{
-				"id":     fmt.Sprintf("%s_%d", msgID, currentTextItemSeq),
-				"type":   "message",
-				"status": "completed",
-				"role":   "assistant",
-			},
-		})
-		seqNum++
-		hasActiveTextItem = false
-
-		if !textStart.IsZero() {
-			dur := time.Since(textStart)
-			textStart = time.Time{}
-			durSeq := msgSeq
-			msgSeq++
-			writeSSEEvent(w, "response.output_item.added", map[string]any{
-				"type":            "response.output_item.added",
-				"sequence_number": seqNum,
-				"output_index":    durSeq,
-				"item": map[string]any{
-					"id":      fmt.Sprintf("%s_%d", msgID, durSeq),
-					"type":    "message",
-					"status":  "in_progress",
-					"role":    "assistant",
-					"content": []map[string]string{},
-				},
-			})
-			seqNum++
-			writeSSEEvent(w, "response.content_part.added", map[string]any{
-				"type":            "response.content_part.added",
-				"sequence_number": seqNum,
-				"item_id":         fmt.Sprintf("%s_%d", msgID, durSeq),
-				"output_index":    durSeq,
-				"content_index":   0,
-				"part":            map[string]string{"type": "output_text", "text": ""},
-			})
-			seqNum++
-			writeSSEEvent(w, "response.output_text.delta", map[string]any{
-				"type":            "response.output_text.delta",
-				"sequence_number": seqNum,
-				"item_id":         fmt.Sprintf("%s_%d", msgID, durSeq),
-				"output_index":    durSeq,
-				"content_index":   0,
-				"delta":           fmt.Sprintf("\n\n⏱️ LLM推理耗时 %s", formatDuration(dur)),
-			})
-			seqNum++
-			writeSSEEvent(w, "response.output_text.done", map[string]any{
-				"type":            "response.output_text.done",
-				"sequence_number": seqNum,
-				"item_id":         fmt.Sprintf("%s_%d", msgID, durSeq),
-				"output_index":    durSeq,
-				"content_index":   0,
-			})
-			seqNum++
-			writeSSEEvent(w, "response.content_part.done", map[string]any{
-				"type":            "response.content_part.done",
-				"sequence_number": seqNum,
-				"item_id":         fmt.Sprintf("%s_%d", msgID, durSeq),
-				"output_index":    durSeq,
-				"content_index":   0,
-				"part":            map[string]string{"type": "output_text"},
-			})
-			seqNum++
-			writeSSEEvent(w, "response.output_item.done", map[string]any{
-				"type":            "response.output_item.done",
-				"sequence_number": seqNum,
-				"output_index":    durSeq,
-				"item": map[string]any{
-					"id":     fmt.Sprintf("%s_%d", msgID, durSeq),
-					"type":   "message",
-					"status": "completed",
-					"role":   "assistant",
-				},
-			})
-			seqNum++
-		}
-	}
-
-	closeReasoningItem := func() {
-		if !hasActiveReasoningItem {
-			return
-		}
-		writeSSEEvent(w, "response.reasoning_text.done", map[string]any{
-			"type":            "response.reasoning_text.done",
-			"sequence_number": seqNum,
-			"item_id":         fmt.Sprintf("%s_%d", msgID, currentReasoningItemSeq),
-			"output_index":    currentReasoningItemSeq,
-			"content_index":   0,
-		})
-		seqNum++
-		writeSSEEvent(w, "response.content_part.done", map[string]any{
-			"type":            "response.content_part.done",
-			"sequence_number": seqNum,
-			"item_id":         fmt.Sprintf("%s_%d", msgID, currentReasoningItemSeq),
-			"output_index":    currentReasoningItemSeq,
-			"content_index":   0,
-			"part":            map[string]string{"type": "reasoning_text"},
-		})
-		seqNum++
-		writeSSEEvent(w, "response.output_item.done", map[string]any{
-			"type":            "response.output_item.done",
-			"sequence_number": seqNum,
-			"output_index":    currentReasoningItemSeq,
-			"item": map[string]any{
-				"id":     fmt.Sprintf("%s_%d", msgID, currentReasoningItemSeq),
-				"type":   "reasoning",
-				"status": "completed",
-			},
-		})
-		seqNum++
-		hasActiveReasoningItem = false
-
-		if !reasoningStart.IsZero() {
-			dur := time.Since(reasoningStart)
-			reasoningStart = time.Time{}
-			durSeq := msgSeq
-			msgSeq++
-			writeSSEEvent(w, "response.output_item.added", map[string]any{
-				"type":            "response.output_item.added",
-				"sequence_number": seqNum,
-				"output_index":    durSeq,
-				"item": map[string]any{
-					"id":      fmt.Sprintf("%s_%d", msgID, durSeq),
-					"type":    "message",
-					"status":  "in_progress",
-					"role":    "assistant",
-					"content": []map[string]string{},
-				},
-			})
-			seqNum++
-			writeSSEEvent(w, "response.content_part.added", map[string]any{
-				"type":            "response.content_part.added",
-				"sequence_number": seqNum,
-				"item_id":         fmt.Sprintf("%s_%d", msgID, durSeq),
-				"output_index":    durSeq,
-				"content_index":   0,
-				"part":            map[string]string{"type": "output_text", "text": ""},
-			})
-			seqNum++
-			writeSSEEvent(w, "response.output_text.delta", map[string]any{
-				"type":            "response.output_text.delta",
-				"sequence_number": seqNum,
-				"item_id":         fmt.Sprintf("%s_%d", msgID, durSeq),
-				"output_index":    durSeq,
-				"content_index":   0,
-				"delta":           fmt.Sprintf("\n\n⏱️ LLM思考耗时 %s", formatDuration(dur)),
-			})
-			seqNum++
-			writeSSEEvent(w, "response.output_text.done", map[string]any{
-				"type":            "response.output_text.done",
-				"sequence_number": seqNum,
-				"item_id":         fmt.Sprintf("%s_%d", msgID, durSeq),
-				"output_index":    durSeq,
-				"content_index":   0,
-			})
-			seqNum++
-			writeSSEEvent(w, "response.content_part.done", map[string]any{
-				"type":            "response.content_part.done",
-				"sequence_number": seqNum,
-				"item_id":         fmt.Sprintf("%s_%d", msgID, durSeq),
-				"output_index":    durSeq,
-				"content_index":   0,
-				"part":            map[string]string{"type": "output_text"},
-			})
-			seqNum++
-			writeSSEEvent(w, "response.output_item.done", map[string]any{
-				"type":            "response.output_item.done",
-				"sequence_number": seqNum,
-				"output_index":    durSeq,
-				"item": map[string]any{
-					"id":     fmt.Sprintf("%s_%d", msgID, durSeq),
-					"type":   "message",
-					"status": "completed",
-					"role":   "assistant",
-				},
-			})
-			seqNum++
-		}
-	}
 
 	heartbeat := time.NewTicker(5 * time.Second)
 	defer heartbeat.Stop()
@@ -634,18 +383,16 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 			flusher.Flush()
 		case ev, more := <-stream.events:
 			if !more {
-				// Stream closed, send completed
 				completed := c.buildResponse(stream, conversationID, req)
 				completed.Status = "completed"
 				for i := range completed.Output {
 					completed.Output[i] = stripContentsFromItem(completed.Output[i])
 				}
-				writeSSEEvent(w, "response.completed", map[string]any{
+				emitSSE(w, &seqNum, "response.completed", map[string]any{
 					"type":            "response.completed",
 					"sequence_number": seqNum,
 					"response":        completed,
 				})
-				seqNum++
 				fmt.Fprint(w, "data: [DONE]\n\n")
 				flusher.Flush()
 				return
@@ -656,278 +403,475 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 
 			switch ev.kind {
 			case eventKindTextDelta:
-				closeReasoningItem()
+				if hasActiveReasoningItem {
+					emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq)
+					emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &reasoningStart, "LLM思考")
+					hasActiveReasoningItem = false
+				}
 				if !hasActiveTextItem {
 					hasActiveTextItem = true
 					textStart = time.Now()
 					currentTextItemSeq = msgSeq
-					writeSSEEvent(w, "response.output_item.added", map[string]any{
-						"type":            "response.output_item.added",
-						"sequence_number": seqNum,
-						"output_index":    msgSeq,
-						"item": map[string]any{
-							"id":      fmt.Sprintf("%s_%d", msgID, msgSeq),
-							"type":    "message",
-							"status":  "in_progress",
-							"role":    "assistant",
-							"content": []map[string]string{},
-						},
-					})
-					seqNum++
-					writeSSEEvent(w, "response.content_part.added", map[string]any{
-						"type":            "response.content_part.added",
-						"sequence_number": seqNum,
-						"item_id":         fmt.Sprintf("%s_%d", msgID, msgSeq),
-						"output_index":    msgSeq,
-						"content_index":   0,
-						"part":            map[string]string{"type": "output_text", "text": ""},
-					})
-					seqNum++
-					msgSeq++
+					emitTextItemStart(w, flusher, msgID, &seqNum, &msgSeq)
 				}
-				writeSSEEvent(w, "response.output_text.delta", map[string]any{
-					"type":            "response.output_text.delta",
-					"sequence_number": seqNum,
-					"item_id":         fmt.Sprintf("%s_%d", msgID, currentTextItemSeq),
-					"output_index":    currentTextItemSeq,
-					"content_index":   0,
-					"delta":           ev.content,
-				})
-				seqNum++
+				emitTextItemDelta(w, flusher, msgID, &seqNum, currentTextItemSeq, ev.content)
 
 			case eventKindReasoning:
-				closeTextItem()
+				if hasActiveTextItem {
+					emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq)
+					emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &textStart, "LLM推理")
+					hasActiveTextItem = false
+				}
 				if !hasActiveReasoningItem {
 					hasActiveReasoningItem = true
 					reasoningStart = time.Now()
 					currentReasoningItemSeq = msgSeq
-					writeSSEEvent(w, "response.output_item.added", map[string]any{
-						"type":            "response.output_item.added",
-						"sequence_number": seqNum,
-						"output_index":    msgSeq,
-						"item": map[string]any{
-							"id":      fmt.Sprintf("%s_%d", msgID, msgSeq),
-							"type":    "reasoning",
-							"status":  "in_progress",
-							"content": []map[string]string{},
-						},
-					})
-					seqNum++
-					writeSSEEvent(w, "response.content_part.added", map[string]any{
-						"type":            "response.content_part.added",
-						"sequence_number": seqNum,
-						"item_id":         fmt.Sprintf("%s_%d", msgID, msgSeq),
-						"output_index":    msgSeq,
-						"content_index":   0,
-						"part":            map[string]string{"type": "reasoning_text", "text": ""},
-					})
-					seqNum++
-					msgSeq++
+					emitReasoningItemStart(w, flusher, msgID, &seqNum, &msgSeq)
 				}
-				writeSSEEvent(w, "response.reasoning_text.delta", map[string]any{
-					"type":            "response.reasoning_text.delta",
-					"sequence_number": seqNum,
-					"item_id":         fmt.Sprintf("%s_%d", msgID, currentReasoningItemSeq),
-					"output_index":    currentReasoningItemSeq,
-					"content_index":   0,
-					"delta":           ev.content,
-				})
-				seqNum++
+				emitReasoningItemDelta(w, flusher, msgID, &seqNum, currentReasoningItemSeq, ev.content)
 
 			case eventKindImage:
-				closeTextItem()
-				closeReasoningItem()
-				// Image: add item, part, part.done, item.done (no delta)
-				writeSSEEvent(w, "response.output_item.added", map[string]any{
-					"type":            "response.output_item.added",
-					"sequence_number": seqNum,
-					"output_index":    msgSeq,
-					"item": map[string]any{
-						"id":      fmt.Sprintf("%s_%d", msgID, msgSeq),
-						"type":    "message",
-						"status":  "in_progress",
-						"role":    "assistant",
-						"content": []map[string]string{},
-					},
-				})
-				seqNum++
-				writeSSEEvent(w, "response.content_part.added", map[string]any{
-					"type":            "response.content_part.added",
-					"sequence_number": seqNum,
-					"item_id":         fmt.Sprintf("%s_%d", msgID, msgSeq),
-					"output_index":    msgSeq,
-					"content_index":   0,
-					"part":            map[string]string{"type": "output_image"},
-				})
-				seqNum++
-				writeSSEEvent(w, "response.content_part.done", map[string]any{
-					"type":            "response.content_part.done",
-					"sequence_number": seqNum,
-					"item_id":         fmt.Sprintf("%s_%d", msgID, msgSeq),
-					"output_index":    msgSeq,
-					"content_index":   0,
-					"part":            map[string]string{"type": "output_image", "url": ev.imageURL},
-				})
-				seqNum++
-				writeSSEEvent(w, "response.output_item.done", map[string]any{
-					"type":            "response.output_item.done",
-					"sequence_number": seqNum,
-					"output_index":    msgSeq,
-					"item": map[string]any{
-						"id":      fmt.Sprintf("%s_%d", msgID, msgSeq),
-						"type":    "message",
-						"status":  "completed",
-						"role":    "assistant",
-						"content": []map[string]string{{"type": "output_image", "url": ev.imageURL}},
-					},
-				})
-				seqNum++
-				msgSeq++
+				if hasActiveTextItem {
+					emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq)
+					emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &textStart, "LLM推理")
+					hasActiveTextItem = false
+				}
+				if hasActiveReasoningItem {
+					emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq)
+					emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &reasoningStart, "LLM思考")
+					hasActiveReasoningItem = false
+				}
+				emitImageItem(w, flusher, msgID, &seqNum, &msgSeq, ev.imageURL)
 
 			case eventKindFunctionCall:
 				funcCallStart = time.Now()
-				closeTextItem()
-				closeReasoningItem()
-				// Function call: full sequence
-				writeSSEEvent(w, "response.output_item.added", map[string]any{
-					"type":            "response.output_item.added",
-					"sequence_number": seqNum,
-					"output_index":    msgSeq,
-					"item": map[string]any{
-						"id":      fmt.Sprintf("%s_%d", msgID, msgSeq),
-						"type":    "function_call",
-						"status":  "in_progress",
-						"call_id": ev.callID,
-						"name":    ev.name,
-					},
-				})
-				seqNum++
-				writeSSEEvent(w, "response.content_part.added", map[string]any{
-					"type":            "response.content_part.added",
-					"sequence_number": seqNum,
-					"item_id":         fmt.Sprintf("%s_%d", msgID, msgSeq),
-					"output_index":    msgSeq,
-					"content_index":   0,
-					"part":            map[string]string{"type": "function_call_arguments", "text": ""},
-				})
-				seqNum++
-				writeSSEEvent(w, "response.function_call_arguments.delta", map[string]any{
-					"type":            "response.function_call_arguments.delta",
-					"sequence_number": seqNum,
-					"item_id":         fmt.Sprintf("%s_%d", msgID, msgSeq),
-					"output_index":    msgSeq,
-					"content_index":   0,
-					"delta":           ev.arguments,
-				})
-				seqNum++
-				writeSSEEvent(w, "response.function_call_arguments.done", map[string]any{
-					"type":            "response.function_call_arguments.done",
-					"sequence_number": seqNum,
-					"item_id":         fmt.Sprintf("%s_%d", msgID, msgSeq),
-					"output_index":    msgSeq,
-					"content_index":   0,
-				})
-				seqNum++
-				writeSSEEvent(w, "response.content_part.done", map[string]any{
-					"type":            "response.content_part.done",
-					"sequence_number": seqNum,
-					"item_id":         fmt.Sprintf("%s_%d", msgID, msgSeq),
-					"output_index":    msgSeq,
-					"content_index":   0,
-					"part":            map[string]string{"type": "function_call_arguments", "text": ev.arguments},
-				})
-				seqNum++
-				writeSSEEvent(w, "response.output_item.done", map[string]any{
-					"type":            "response.output_item.done",
-					"sequence_number": seqNum,
-					"output_index":    msgSeq,
-					"item": map[string]any{
-						"id":      fmt.Sprintf("%s_%d", msgID, msgSeq),
-						"type":    "function_call",
-						"status":  "completed",
-						"call_id": ev.callID,
-						"name":    ev.name,
-					},
-				})
-				seqNum++
-				// Emit a text item with the function call duration so the frontend can display it
+				if hasActiveTextItem {
+					emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq)
+					emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &textStart, "LLM推理")
+					hasActiveTextItem = false
+				}
+				if hasActiveReasoningItem {
+					emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq)
+					emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &reasoningStart, "LLM思考")
+					hasActiveReasoningItem = false
+				}
+				emitFunctionCallItem(w, flusher, msgID, &seqNum, msgSeq, ev)
 				if !funcCallStart.IsZero() {
 					durMs := time.Since(funcCallStart).Milliseconds()
 					funcCallStart = time.Time{}
-					fcDurSeq := msgSeq
-					msgSeq++
-					writeSSEEvent(w, "response.output_item.added", map[string]any{
-						"type":            "response.output_item.added",
-						"sequence_number": seqNum,
-						"output_index":    fcDurSeq,
-						"item": map[string]any{
-							"id":      fmt.Sprintf("%s_%d", msgID, fcDurSeq),
-							"type":    "message",
-							"status":  "in_progress",
-							"role":    "assistant",
-							"content": []map[string]string{},
-						},
-					})
-					seqNum++
-					writeSSEEvent(w, "response.content_part.added", map[string]any{
-						"type":            "response.content_part.added",
-						"sequence_number": seqNum,
-						"item_id":         fmt.Sprintf("%s_%d", msgID, fcDurSeq),
-						"output_index":    fcDurSeq,
-						"content_index":   0,
-						"part":            map[string]string{"type": "output_text", "text": ""},
-					})
-					seqNum++
-					writeSSEEvent(w, "response.output_text.delta", map[string]any{
-						"type":            "response.output_text.delta",
-						"sequence_number": seqNum,
-						"item_id":         fmt.Sprintf("%s_%d", msgID, fcDurSeq),
-						"output_index":    fcDurSeq,
-						"content_index":   0,
-						"delta":           fmt.Sprintf("\n\n⏱️ Tool调用耗时 %s", formatDuration(time.Duration(durMs)*time.Millisecond)),
-					})
-					seqNum++
-					writeSSEEvent(w, "response.output_text.done", map[string]any{
-						"type":            "response.output_text.done",
-						"sequence_number": seqNum,
-						"item_id":         fmt.Sprintf("%s_%d", msgID, fcDurSeq),
-						"output_index":    fcDurSeq,
-						"content_index":   0,
-					})
-					seqNum++
-					writeSSEEvent(w, "response.content_part.done", map[string]any{
-						"type":            "response.content_part.done",
-						"sequence_number": seqNum,
-						"item_id":         fmt.Sprintf("%s_%d", msgID, fcDurSeq),
-						"output_index":    fcDurSeq,
-						"content_index":   0,
-						"part":            map[string]string{"type": "output_text"},
-					})
-					seqNum++
-					writeSSEEvent(w, "response.output_item.done", map[string]any{
-						"type":            "response.output_item.done",
-						"sequence_number": seqNum,
-						"output_index":    fcDurSeq,
-						"item": map[string]any{
-							"id":     fmt.Sprintf("%s_%d", msgID, fcDurSeq),
-							"type":   "message",
-							"status": "completed",
-							"role":   "assistant",
-						},
-					})
-					seqNum++
+					emitDurationItemWithMS(w, flusher, msgID, &seqNum, &msgSeq, durMs, "Tool调用")
 				} else {
 					msgSeq++
 				}
 
 			case eventKindTurnEnd:
-				closeTextItem()
-				closeReasoningItem()
+				if hasActiveTextItem {
+					emitTextItemEnd(w, flusher, msgID, &seqNum, currentTextItemSeq)
+					emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &textStart, "LLM推理")
+					hasActiveTextItem = false
+				}
+				if hasActiveReasoningItem {
+					emitReasoningItemEnd(w, flusher, msgID, &seqNum, currentReasoningItemSeq)
+					emitDurationItem(w, flusher, msgID, &seqNum, &msgSeq, &reasoningStart, "LLM思考")
+					hasActiveReasoningItem = false
+				}
 			}
 
 			flusher.Flush()
 		}
 	}
+}
+
+func emitSSE(w http.ResponseWriter, seqNum *int, eventType string, payload map[string]any) {
+	writeSSEEvent(w, eventType, payload)
+	*seqNum++
+}
+
+func emitTextItemStart(w http.ResponseWriter, flusher http.Flusher, msgID string, seqNum, msgSeq *int) {
+	idx := *msgSeq
+	emitSSE(w, seqNum, "response.output_item.added", map[string]any{
+		"type":            "response.output_item.added",
+		"sequence_number": *seqNum,
+		"output_index":    idx,
+		"item": map[string]any{
+			"id":      fmt.Sprintf("%s_%d", msgID, idx),
+			"type":    "message",
+			"status":  "in_progress",
+			"role":    "assistant",
+			"content": []map[string]string{},
+		},
+	})
+	emitSSE(w, seqNum, "response.content_part.added", map[string]any{
+		"type":            "response.content_part.added",
+		"sequence_number": *seqNum,
+		"item_id":         fmt.Sprintf("%s_%d", msgID, idx),
+		"output_index":    idx,
+		"content_index":   0,
+		"part":            map[string]string{"type": "output_text", "text": ""},
+	})
+	*msgSeq++
+}
+
+func emitTextItemDelta(w http.ResponseWriter, flusher http.Flusher, msgID string, seqNum *int, currentSeq int, delta string) {
+	emitSSE(w, seqNum, "response.output_text.delta", map[string]any{
+		"type":            "response.output_text.delta",
+		"sequence_number": *seqNum,
+		"item_id":         fmt.Sprintf("%s_%d", msgID, currentSeq),
+		"output_index":    currentSeq,
+		"content_index":   0,
+		"delta":           delta,
+	})
+}
+
+func emitTextItemEnd(w http.ResponseWriter, flusher http.Flusher, msgID string, seqNum *int, currentSeq int) {
+	emitSSE(w, seqNum, "response.output_text.done", map[string]any{
+		"type":            "response.output_text.done",
+		"sequence_number": *seqNum,
+		"item_id":         fmt.Sprintf("%s_%d", msgID, currentSeq),
+		"output_index":    currentSeq,
+		"content_index":   0,
+	})
+	emitSSE(w, seqNum, "response.content_part.done", map[string]any{
+		"type":            "response.content_part.done",
+		"sequence_number": *seqNum,
+		"item_id":         fmt.Sprintf("%s_%d", msgID, currentSeq),
+		"output_index":    currentSeq,
+		"content_index":   0,
+		"part":            map[string]string{"type": "output_text"},
+	})
+	emitSSE(w, seqNum, "response.output_item.done", map[string]any{
+		"type":            "response.output_item.done",
+		"sequence_number": *seqNum,
+		"output_index":    currentSeq,
+		"item": map[string]any{
+			"id":     fmt.Sprintf("%s_%d", msgID, currentSeq),
+			"type":   "message",
+			"status": "completed",
+			"role":   "assistant",
+		},
+	})
+}
+
+func emitReasoningItemStart(w http.ResponseWriter, flusher http.Flusher, msgID string, seqNum, msgSeq *int) {
+	idx := *msgSeq
+	emitSSE(w, seqNum, "response.output_item.added", map[string]any{
+		"type":            "response.output_item.added",
+		"sequence_number": *seqNum,
+		"output_index":    idx,
+		"item": map[string]any{
+			"id":      fmt.Sprintf("%s_%d", msgID, idx),
+			"type":    "reasoning",
+			"status":  "in_progress",
+			"content": []map[string]string{},
+		},
+	})
+	emitSSE(w, seqNum, "response.content_part.added", map[string]any{
+		"type":            "response.content_part.added",
+		"sequence_number": *seqNum,
+		"item_id":         fmt.Sprintf("%s_%d", msgID, idx),
+		"output_index":    idx,
+		"content_index":   0,
+		"part":            map[string]string{"type": "reasoning_text", "text": ""},
+	})
+	*msgSeq++
+}
+
+func emitReasoningItemDelta(w http.ResponseWriter, flusher http.Flusher, msgID string, seqNum *int, currentSeq int, delta string) {
+	emitSSE(w, seqNum, "response.reasoning_text.delta", map[string]any{
+		"type":            "response.reasoning_text.delta",
+		"sequence_number": *seqNum,
+		"item_id":         fmt.Sprintf("%s_%d", msgID, currentSeq),
+		"output_index":    currentSeq,
+		"content_index":   0,
+		"delta":           delta,
+	})
+}
+
+func emitReasoningItemEnd(w http.ResponseWriter, flusher http.Flusher, msgID string, seqNum *int, currentSeq int) {
+	emitSSE(w, seqNum, "response.reasoning_text.done", map[string]any{
+		"type":            "response.reasoning_text.done",
+		"sequence_number": *seqNum,
+		"item_id":         fmt.Sprintf("%s_%d", msgID, currentSeq),
+		"output_index":    currentSeq,
+		"content_index":   0,
+	})
+	emitSSE(w, seqNum, "response.content_part.done", map[string]any{
+		"type":            "response.content_part.done",
+		"sequence_number": *seqNum,
+		"item_id":         fmt.Sprintf("%s_%d", msgID, currentSeq),
+		"output_index":    currentSeq,
+		"content_index":   0,
+		"part":            map[string]string{"type": "reasoning_text"},
+	})
+	emitSSE(w, seqNum, "response.output_item.done", map[string]any{
+		"type":            "response.output_item.done",
+		"sequence_number": *seqNum,
+		"output_index":    currentSeq,
+		"item": map[string]any{
+			"id":     fmt.Sprintf("%s_%d", msgID, currentSeq),
+			"type":   "reasoning",
+			"status": "completed",
+		},
+	})
+}
+
+func emitImageItem(w http.ResponseWriter, flusher http.Flusher, msgID string, seqNum, msgSeq *int, imageURL string) {
+	idx := *msgSeq
+	emitSSE(w, seqNum, "response.output_item.added", map[string]any{
+		"type":            "response.output_item.added",
+		"sequence_number": *seqNum,
+		"output_index":    idx,
+		"item": map[string]any{
+			"id":      fmt.Sprintf("%s_%d", msgID, idx),
+			"type":    "message",
+			"status":  "in_progress",
+			"role":    "assistant",
+			"content": []map[string]string{},
+		},
+	})
+	emitSSE(w, seqNum, "response.content_part.added", map[string]any{
+		"type":            "response.content_part.added",
+		"sequence_number": *seqNum,
+		"item_id":         fmt.Sprintf("%s_%d", msgID, idx),
+		"output_index":    idx,
+		"content_index":   0,
+		"part":            map[string]string{"type": "output_image"},
+	})
+	emitSSE(w, seqNum, "response.content_part.done", map[string]any{
+		"type":            "response.content_part.done",
+		"sequence_number": *seqNum,
+		"item_id":         fmt.Sprintf("%s_%d", msgID, idx),
+		"output_index":    idx,
+		"content_index":   0,
+		"part":            map[string]string{"type": "output_image", "url": imageURL},
+	})
+	emitSSE(w, seqNum, "response.output_item.done", map[string]any{
+		"type":            "response.output_item.done",
+		"sequence_number": *seqNum,
+		"output_index":    idx,
+		"item": map[string]any{
+			"id":      fmt.Sprintf("%s_%d", msgID, idx),
+			"type":    "message",
+			"status":  "completed",
+			"role":    "assistant",
+			"content": []map[string]string{{"type": "output_image", "url": imageURL}},
+		},
+	})
+	*msgSeq++
+}
+
+func emitFunctionCallItem(w http.ResponseWriter, flusher http.Flusher, msgID string, seqNum *int, msgSeq int, ev streamEvent) {
+	emitSSE(w, seqNum, "response.output_item.added", map[string]any{
+		"type":            "response.output_item.added",
+		"sequence_number": *seqNum,
+		"output_index":    msgSeq,
+		"item": map[string]any{
+			"id":      fmt.Sprintf("%s_%d", msgID, msgSeq),
+			"type":    "function_call",
+			"status":  "in_progress",
+			"call_id": ev.callID,
+			"name":    ev.name,
+		},
+	})
+	emitSSE(w, seqNum, "response.content_part.added", map[string]any{
+		"type":            "response.content_part.added",
+		"sequence_number": *seqNum,
+		"item_id":         fmt.Sprintf("%s_%d", msgID, msgSeq),
+		"output_index":    msgSeq,
+		"content_index":   0,
+		"part":            map[string]string{"type": "function_call_arguments", "text": ""},
+	})
+	emitSSE(w, seqNum, "response.function_call_arguments.delta", map[string]any{
+		"type":            "response.function_call_arguments.delta",
+		"sequence_number": *seqNum,
+		"item_id":         fmt.Sprintf("%s_%d", msgID, msgSeq),
+		"output_index":    msgSeq,
+		"content_index":   0,
+		"delta":           ev.arguments,
+	})
+	emitSSE(w, seqNum, "response.function_call_arguments.done", map[string]any{
+		"type":            "response.function_call_arguments.done",
+		"sequence_number": *seqNum,
+		"item_id":         fmt.Sprintf("%s_%d", msgID, msgSeq),
+		"output_index":    msgSeq,
+		"content_index":   0,
+	})
+	emitSSE(w, seqNum, "response.content_part.done", map[string]any{
+		"type":            "response.content_part.done",
+		"sequence_number": *seqNum,
+		"item_id":         fmt.Sprintf("%s_%d", msgID, msgSeq),
+		"output_index":    msgSeq,
+		"content_index":   0,
+		"part":            map[string]string{"type": "function_call_arguments", "text": ev.arguments},
+	})
+	emitSSE(w, seqNum, "response.output_item.done", map[string]any{
+		"type":            "response.output_item.done",
+		"sequence_number": *seqNum,
+		"output_index":    msgSeq,
+		"item": map[string]any{
+			"id":      fmt.Sprintf("%s_%d", msgID, msgSeq),
+			"type":    "function_call",
+			"status":  "completed",
+			"call_id": ev.callID,
+			"name":    ev.name,
+		},
+	})
+}
+
+func emitTextItemEndWithDuration(w http.ResponseWriter, flusher http.Flusher, msgID string, seqNum *int, currentSeq int, startTime *time.Time) {
+	if startTime != nil && !(*startTime).IsZero() {
+		dur := time.Since(*startTime)
+		*startTime = time.Time{}
+		emitSSE(w, seqNum, "response.output_text.delta", map[string]any{
+			"type":            "response.output_text.delta",
+			"sequence_number": *seqNum,
+			"item_id":         fmt.Sprintf("%s_%d", msgID, currentSeq),
+			"output_index":    currentSeq,
+			"content_index":   0,
+			"delta":           fmt.Sprintf("\n\n⏱️ LLM推理耗时 %s", formatDuration(dur)),
+		})
+	}
+	emitTextItemEnd(w, flusher, msgID, seqNum, currentSeq)
+}
+
+func emitReasoningItemEndWithDuration(w http.ResponseWriter, flusher http.Flusher, msgID string, seqNum *int, currentSeq int, startTime *time.Time) {
+	if startTime != nil && !(*startTime).IsZero() {
+		dur := time.Since(*startTime)
+		*startTime = time.Time{}
+		emitSSE(w, seqNum, "response.reasoning_text.delta", map[string]any{
+			"type":            "response.reasoning_text.delta",
+			"sequence_number": *seqNum,
+			"item_id":         fmt.Sprintf("%s_%d", msgID, currentSeq),
+			"output_index":    currentSeq,
+			"content_index":   0,
+			"delta":           fmt.Sprintf("\n\n⏱️ LLM思考耗时 %s", formatDuration(dur)),
+		})
+	}
+	emitReasoningItemEnd(w, flusher, msgID, seqNum, currentSeq)
+}
+
+func emitDurationItem(w http.ResponseWriter, flusher http.Flusher, msgID string, seqNum, msgSeq *int, startTime *time.Time, label string) {
+	if startTime == nil || (*startTime).IsZero() {
+		return
+	}
+	dur := time.Since(*startTime)
+	*startTime = time.Time{}
+	idx := *msgSeq
+	*msgSeq++
+
+	emitSSE(w, seqNum, "response.output_item.added", map[string]any{
+		"type":            "response.output_item.added",
+		"sequence_number": *seqNum,
+		"output_index":    idx,
+		"item": map[string]any{
+			"id":      fmt.Sprintf("%s_%d", msgID, idx),
+			"type":    "message",
+			"status":  "in_progress",
+			"role":    "assistant",
+			"content": []map[string]string{},
+		},
+	})
+	emitSSE(w, seqNum, "response.content_part.added", map[string]any{
+		"type":            "response.content_part.added",
+		"sequence_number": *seqNum,
+		"item_id":         fmt.Sprintf("%s_%d", msgID, idx),
+		"output_index":    idx,
+		"content_index":   0,
+		"part":            map[string]string{"type": "output_text", "text": ""},
+	})
+	emitSSE(w, seqNum, "response.output_text.delta", map[string]any{
+		"type":            "response.output_text.delta",
+		"sequence_number": *seqNum,
+		"item_id":         fmt.Sprintf("%s_%d", msgID, idx),
+		"output_index":    idx,
+		"content_index":   0,
+		"delta":           fmt.Sprintf("\n\n⏱️ %s耗时 %s", label, formatDuration(dur)),
+	})
+	emitSSE(w, seqNum, "response.output_text.done", map[string]any{
+		"type":            "response.output_text.done",
+		"sequence_number": *seqNum,
+		"item_id":         fmt.Sprintf("%s_%d", msgID, idx),
+		"output_index":    idx,
+		"content_index":   0,
+	})
+	emitSSE(w, seqNum, "response.content_part.done", map[string]any{
+		"type":            "response.content_part.done",
+		"sequence_number": *seqNum,
+		"item_id":         fmt.Sprintf("%s_%d", msgID, idx),
+		"output_index":    idx,
+		"content_index":   0,
+		"part":            map[string]string{"type": "output_text"},
+	})
+	emitSSE(w, seqNum, "response.output_item.done", map[string]any{
+		"type":            "response.output_item.done",
+		"sequence_number": *seqNum,
+		"output_index":    idx,
+		"item": map[string]any{
+			"id":     fmt.Sprintf("%s_%d", msgID, idx),
+			"type":   "message",
+			"status": "completed",
+			"role":   "assistant",
+		},
+	})
+}
+
+func emitDurationItemWithMS(w http.ResponseWriter, flusher http.Flusher, msgID string, seqNum, msgSeq *int, durMs int64, label string) {
+	idx := *msgSeq
+	*msgSeq++
+	emitSSE(w, seqNum, "response.output_item.added", map[string]any{
+		"type":            "response.output_item.added",
+		"sequence_number": *seqNum,
+		"output_index":    idx,
+		"item": map[string]any{
+			"id":      fmt.Sprintf("%s_%d", msgID, idx),
+			"type":    "message",
+			"status":  "in_progress",
+			"role":    "assistant",
+			"content": []map[string]string{},
+		},
+	})
+	emitSSE(w, seqNum, "response.content_part.added", map[string]any{
+		"type":            "response.content_part.added",
+		"sequence_number": *seqNum,
+		"item_id":         fmt.Sprintf("%s_%d", msgID, idx),
+		"output_index":    idx,
+		"content_index":   0,
+		"part":            map[string]string{"type": "output_text", "text": ""},
+	})
+	emitSSE(w, seqNum, "response.output_text.delta", map[string]any{
+		"type":            "response.output_text.delta",
+		"sequence_number": *seqNum,
+		"item_id":         fmt.Sprintf("%s_%d", msgID, idx),
+		"output_index":    idx,
+		"content_index":   0,
+		"delta":           fmt.Sprintf("\n\n⏱️ %s耗时 %s", label, formatDuration(time.Duration(durMs)*time.Millisecond)),
+	})
+	emitSSE(w, seqNum, "response.output_text.done", map[string]any{
+		"type":            "response.output_text.done",
+		"sequence_number": *seqNum,
+		"item_id":         fmt.Sprintf("%s_%d", msgID, idx),
+		"output_index":    idx,
+		"content_index":   0,
+	})
+	emitSSE(w, seqNum, "response.content_part.done", map[string]any{
+		"type":            "response.content_part.done",
+		"sequence_number": *seqNum,
+		"item_id":         fmt.Sprintf("%s_%d", msgID, idx),
+		"output_index":    idx,
+		"content_index":   0,
+		"part":            map[string]string{"type": "output_text"},
+	})
+	emitSSE(w, seqNum, "response.output_item.done", map[string]any{
+		"type":            "response.output_item.done",
+		"sequence_number": *seqNum,
+		"output_index":    idx,
+		"item": map[string]any{
+			"id":     fmt.Sprintf("%s_%d", msgID, idx),
+			"type":   "message",
+			"status": "completed",
+			"role":   "assistant",
+		},
+	})
 }
 
 func writeSSEEvent(w http.ResponseWriter, eventType string, payload map[string]any) {

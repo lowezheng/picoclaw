@@ -256,6 +256,19 @@ func cancelConfiguredStreamingLLM(ctx context.Context, exec *turnExecution) {
 	publisher.Cancel(ctx)
 }
 
+// finalizeStreamingIfNeeded flushes and closes any active streaming output
+// for the current turn. It is used when the turn ends without entering the
+// normal Finalize path (e.g. allResponsesHandled=true).
+func finalizeStreamingIfNeeded(ctx context.Context, p *Pipeline, ts *turnState, exec *turnExecution, content string) {
+	if exec.streamingPublisher != nil {
+		_ = finalizeConfiguredStreamingLLM(ctx, ts, exec, content, computeContextUsage(ts.agent, ts.sessionKey))
+	} else if p != nil && p.Bus != nil {
+		if streamer, ok := p.Bus.GetStreamer(ctx, ts.channel, ts.chatID, ts.sessionKey); ok && streamer != nil {
+			_ = streamer.Finalize(ctx, content)
+		}
+	}
+}
+
 func (p *Pipeline) configuredStreamingEligible(ts *turnState, exec *turnExecution) bool {
 	if p == nil || ts == nil || exec == nil || p.Bus == nil {
 		logger.DebugCF("agent", "configured streaming not used", map[string]any{

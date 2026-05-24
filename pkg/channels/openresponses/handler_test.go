@@ -301,14 +301,19 @@ func TestServeStream_TextOnly(t *testing.T) {
 	events := parseSSEEvents(rr.Body.String())
 	assertEventSequence(t, events, []string{
 		"response.in_progress",
-		"response.output_item.added",
-		"response.content_part.added",
-		"response.output_text.delta",
-		"response.output_text.delta",
-		"response.output_text.delta", // duration text
+		"response.output_item.added",     // message start
+		"response.content_part.added",    // output_text part
+		"response.output_text.delta",     // Hello
+		"response.output_text.delta",     // world
 		"response.output_text.done",
 		"response.content_part.done",
-		"response.output_item.done",
+		"response.output_item.done",      // message done
+		"response.output_item.added",     // duration item
+		"response.content_part.added",
+		"response.output_text.delta",     // duration text
+		"response.output_text.done",
+		"response.content_part.done",
+		"response.output_item.done",      // duration done
 		"response.completed",
 	})
 
@@ -357,23 +362,33 @@ func TestServeStream_ReasoningAfterText(t *testing.T) {
 	ch.serveStream(rr, req, stream, "conv_test", CreateResponseRequest{Stream: true})
 	events := parseSSEEvents(rr.Body.String())
 
-	// Text closes, then reasoning starts
+	// Text closes (with duration item), then reasoning starts (with duration item)
 	assertEventSequence(t, events, []string{
 		"response.in_progress",
 		"response.output_item.added",     // message
 		"response.content_part.added",    // output_text
 		"response.output_text.delta",     // Hello
-		"response.output_text.delta",     // text duration
 		"response.output_text.done",
 		"response.content_part.done",
 		"response.output_item.done",      // message done
+		"response.output_item.added",     // text duration item
+		"response.content_part.added",
+		"response.output_text.delta",     // text duration
+		"response.output_text.done",
+		"response.content_part.done",
+		"response.output_item.done",      // text duration done
 		"response.output_item.added",     // reasoning
 		"response.content_part.added",    // reasoning_text
 		"response.reasoning_text.delta",  // Let me think
-		"response.reasoning_text.delta",  // reasoning duration
 		"response.reasoning_text.done",
 		"response.content_part.done",
 		"response.output_item.done",      // reasoning done
+		"response.output_item.added",     // reasoning duration item
+		"response.content_part.added",
+		"response.output_text.delta",     // reasoning duration
+		"response.output_text.done",
+		"response.content_part.done",
+		"response.output_item.done",      // reasoning duration done
 		"response.completed",
 	})
 
@@ -383,15 +398,13 @@ func TestServeStream_ReasoningAfterText(t *testing.T) {
 		if ev.Event == "response.output_text.delta" {
 			var payload map[string]any
 			_ = json.Unmarshal([]byte(ev.Data), &payload)
-			if d, ok := payload["delta"].(string); ok && strings.Contains(d, "LLM推理耗时") {
-				foundTextDur = true
-			}
-		}
-		if ev.Event == "response.reasoning_text.delta" {
-			var payload map[string]any
-			_ = json.Unmarshal([]byte(ev.Data), &payload)
-			if d, ok := payload["delta"].(string); ok && strings.Contains(d, "思考耗时") {
-				foundReasoningDur = true
+			if d, ok := payload["delta"].(string); ok {
+				if strings.Contains(d, "LLM推理耗时") {
+					foundTextDur = true
+				}
+				if strings.Contains(d, "LLM思考耗时") {
+					foundReasoningDur = true
+				}
 			}
 		}
 	}
@@ -425,22 +438,27 @@ func TestServeStream_FunctionCallSequence(t *testing.T) {
 		"response.output_item.added",              // message
 		"response.content_part.added",             // output_text
 		"response.output_text.delta",              // Let me
-		"response.output_text.delta",              // text duration
 		"response.output_text.done",
 		"response.content_part.done",
 		"response.output_item.done",               // message done
+		"response.output_item.added",              // text duration item
+		"response.content_part.added",
+		"response.output_text.delta",              // text duration
+		"response.output_text.done",
+		"response.content_part.done",
+		"response.output_item.done",               // text duration done
 		"response.output_item.added",              // function_call
 		"response.content_part.added",             // function_call_arguments
 		"response.function_call_arguments.delta",  // args
 		"response.function_call_arguments.done",
 		"response.content_part.done",
 		"response.output_item.done",               // function_call done
-		"response.output_item.added",              // duration text item
+		"response.output_item.added",              // function call duration item
 		"response.content_part.added",
 		"response.output_text.delta",              // function call duration
 		"response.output_text.done",
 		"response.content_part.done",
-		"response.output_item.done",
+		"response.output_item.done",               // function call duration done
 		"response.completed",
 	})
 
@@ -513,6 +531,12 @@ func TestServeStream_ImageEvent(t *testing.T) {
 
 // -- serveJSON response tests --
 
+// noFlusher wraps a ResponseWriter without exposing Flush(), forcing serveJSON
+// down the non-streaming JSON path for tests.
+type noFlusher struct {
+	http.ResponseWriter
+}
+
 func TestServeJSON_TextDeltaAccumulation(t *testing.T) {
 	ch := newTestChannel()
 	stream := newPendingStream()
@@ -526,7 +550,7 @@ func TestServeJSON_TextDeltaAccumulation(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses/chat", nil)
-	ch.serveJSON(rr, req, stream, "conv_json", CreateResponseRequest{})
+	ch.serveJSON(&noFlusher{rr}, req, stream, "conv_json", CreateResponseRequest{})
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
@@ -559,7 +583,7 @@ func TestServeJSON_FunctionCallOutput(t *testing.T) {
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses/chat", nil)
-	ch.serveJSON(rr, req, stream, "conv_fc", CreateResponseRequest{})
+	ch.serveJSON(&noFlusher{rr}, req, stream, "conv_fc", CreateResponseRequest{})
 
 	var resp Response
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {

@@ -28,8 +28,10 @@ func (p *Pipeline) Finalize(
 	// But still check for hard abort - if requested, abort the turn.
 	if exec.allResponsesHandled {
 		if ts.hardAbortRequested() {
+			cancelConfiguredStreamingLLM(turnCtx, exec)
 			return al.abortTurn(ts)
 		}
+		finalizeStreamingIfNeeded(turnCtx, p, ts, exec, finalContent)
 		ts.setPhase(TurnPhaseCompleted)
 		return turnResult{
 			finalContent: finalContent,
