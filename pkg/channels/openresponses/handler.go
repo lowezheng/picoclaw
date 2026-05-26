@@ -341,6 +341,8 @@ func (c *OpenResponsesChannel) buildResponse(stream *pendingStream, conversation
 		})
 	}
 
+	usage := stream.getUsage()
+
 	return Response{
 		ID:                 respID,
 		Object:             "response",
@@ -350,7 +352,7 @@ func (c *OpenResponsesChannel) buildResponse(stream *pendingStream, conversation
 		Output:             outputItems,
 		ConversationID:     conversationID,
 		PreviousResponseID: req.PreviousResponseID,
-		Usage:              Usage{0, 0},
+		Usage:              usage,
 	}
 }
 
@@ -405,7 +407,7 @@ func (c *OpenResponsesChannel) serveStream(w http.ResponseWriter, r *http.Reques
 			Status:         "in_progress",
 			Output:         []ResponseItem{},
 			ConversationID: conversationID,
-			Usage:          Usage{0, 0},
+			Usage:          Usage{},
 		},
 	})
 	flusher.Flush()

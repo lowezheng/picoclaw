@@ -96,6 +96,7 @@ export function OpenResponsesChatPage() {
     messages,
     isTyping,
     activeSessionId,
+    contextUsage,
   } = useAtomValue(openResponsesChatAtom)
 
   const { state: gwState } = useGateway()
@@ -323,6 +324,7 @@ export function OpenResponsesChatPage() {
         onSend={handleSend}
         inputDisabledReason={inputDisabledReason}
         canSend={canSubmit}
+        contextUsage={contextUsage}
       />
     </div>
   )

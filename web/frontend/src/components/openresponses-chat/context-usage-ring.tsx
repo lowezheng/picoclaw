@@ -145,6 +145,15 @@ export function ContextUsageRing({
             />
           </div>
 
+          <div className="mt-2 flex items-center justify-between">
+            <span className="text-muted-foreground text-xs">
+              {t("chat.totalTokens", "Total Tokens")}
+            </span>
+            <span className="text-xs font-medium tabular-nums">
+              {formatTokens(usage.total_tokens)}
+            </span>
+          </div>
+
           <button
             type="button"
             onClick={handleDetail}

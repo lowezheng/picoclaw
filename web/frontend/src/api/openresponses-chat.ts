@@ -19,7 +19,7 @@ export type SSEEvent =
   | { type: "reasoning"; content: string }
   | { type: "function_call"; call_id: string; name: string; arguments: string }
   | { type: "image"; image_url: string; caption?: string }
-  | { type: "turn_end" }
+  | { type: "turn_end"; total_tokens?: number; used_percent?: number }
   | { type: "error"; message: string }
 
 function parseSSEEvent(line: string): SSEEvent | null {
@@ -66,7 +66,12 @@ function parseSSEEvent(line: string): SSEEvent | null {
       }
     }
     if (eventType === "response.completed" || eventType === "response.done") {
-      return { type: "turn_end" }
+      const usage = data.response?.usage || data.usage || {}
+      return {
+        type: "turn_end",
+        total_tokens: Number(usage.total_tokens || 0),
+        used_percent: Number(usage.used_percent || 0),
+      }
     }
     if (eventType === "response.content_part.done" || eventType === "response.content_part.added") {
       const part = data.part || {}

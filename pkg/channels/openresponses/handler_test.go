@@ -632,3 +632,34 @@ func TestServeJSON_FunctionCallOutput(t *testing.T) {
 // Note: ServeHTTP → dispatch → HandleInboundContext requires a real MessageBus.
 // The core SSE/JSON business logic is covered by serveStream/serveJSON tests above.
 // Full end-to-end tests should be run against a running server with test_curl.sh.
+
+func TestBuildResponse_UsesStreamUsage(t *testing.T) {
+	ch := newTestChannel()
+	stream := newPendingStream()
+	stream.push(streamEvent{kind: eventKindText, content: "hello world"})
+	stream.push(streamEvent{kind: eventKindTurnEnd})
+	stream.setUsage(Usage{TotalTokens: 55})
+	stream.close()
+
+	req := CreateResponseRequest{Model: "gpt-4o"}
+	resp := ch.buildResponse(stream, "conv_test", req)
+
+	if resp.Usage.TotalTokens != 55 {
+		t.Fatalf("expected TotalTokens=55, got %d", resp.Usage.TotalTokens)
+	}
+}
+
+func TestBuildResponse_ZeroUsageWhenNotSet(t *testing.T) {
+	ch := newTestChannel()
+	stream := newPendingStream()
+	stream.push(streamEvent{kind: eventKindText, content: "hello"})
+	stream.push(streamEvent{kind: eventKindTurnEnd})
+	stream.close()
+
+	req := CreateResponseRequest{Model: "gpt-4o"}
+	resp := ch.buildResponse(stream, "conv_test", req)
+
+	if resp.Usage.TotalTokens != 0 {
+		t.Fatalf("expected zero usage when not set, got %+v", resp.Usage)
+	}
+}

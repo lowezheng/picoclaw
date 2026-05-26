@@ -240,6 +240,12 @@ func (c *OpenResponsesChannel) Send(ctx context.Context, msg bus.OutboundMessage
 	default:
 		// Non-streaming: outbound_kind="final" triggers turn end
 		if msg.Context.Raw != nil && msg.Context.Raw["outbound_kind"] == "final" {
+			if msg.ContextUsage != nil {
+				st.stream.setUsage(Usage{
+					TotalTokens: msg.ContextUsage.UsedTokens,
+					UsedPercent: msg.ContextUsage.UsedPercent,
+				})
+			}
 			st.stream.push(streamEvent{kind: eventKindText, content: msg.Content})
 			st.stream.push(streamEvent{kind: eventKindTurnEnd})
 			c.convMu.Lock()
@@ -377,6 +383,17 @@ func (s *openResponsesStreamer) FinalizeReasoning(ctx context.Context, content s
 }
 
 func (s *openResponsesStreamer) Finalize(ctx context.Context, content string) error {
+	return s.FinalizeWithContext(ctx, content, nil)
+}
+
+func (s *openResponsesStreamer) FinalizeWithContext(ctx context.Context, content string, contextUsage *bus.ContextUsage) error {
+	if contextUsage != nil {
+		s.stream.setUsage(Usage{
+			TotalTokens: contextUsage.UsedTokens,
+			UsedPercent: contextUsage.UsedPercent,
+		})
+	}
+
 	// If no text was streamed via Update, push the final content as a text event
 	// so buildResponse can capture it before turn_end.
 	if s.lastContent == "" && strings.TrimSpace(content) != "" {

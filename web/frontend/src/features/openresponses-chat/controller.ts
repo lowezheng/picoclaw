@@ -232,6 +232,17 @@ function handleSSEEvent(
         appendToolCalls(calls)
         pendingToolCalls.clear()
       }
+      // Update context usage if present
+      if (event.total_tokens !== undefined || event.used_percent !== undefined) {
+        updateOpenResponsesChatStore({
+          contextUsage: {
+            used_tokens: event.total_tokens || 0,
+            total_tokens: event.total_tokens || 0,
+            compress_at_tokens: 0,
+            used_percent: event.used_percent || 0,
+          },
+        })
+      }
       // Reset refs so the next turn starts fresh messages
       textMessageRef.id = null
       reasoningMessageRef.id = null

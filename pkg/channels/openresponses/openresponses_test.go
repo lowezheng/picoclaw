@@ -393,6 +393,42 @@ func TestSend_FinalOutboundTriggersTurnEnd(t *testing.T) {
 	}
 }
 
+func TestSend_FinalOutboundSavesContextUsage(t *testing.T) {
+	ch := newTestChannel()
+	convID := "conv_send_final_usage"
+	st := &conversationState{
+		stream: newPendingStream(),
+		done:   make(chan struct{}),
+	}
+	st.active.Store(true)
+	ch.convs[convID] = st
+
+	_, err := ch.Send(context.Background(), bus.OutboundMessage{
+		ChatID:  convID,
+		Content: "Final answer",
+		Context: bus.InboundContext{Raw: map[string]string{"outbound_kind": "final"}},
+		ContextUsage: &bus.ContextUsage{
+			UsedTokens:  280,
+			UsedPercent: 75,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Drain events
+	st.stream.next() // text event
+	st.stream.next() // turn_end
+
+	got := st.stream.getUsage()
+	if got.TotalTokens != 280 {
+		t.Fatalf("expected TotalTokens=280, got %d", got.TotalTokens)
+	}
+	if got.UsedPercent != 75 {
+		t.Fatalf("expected UsedPercent=75, got %d", got.UsedPercent)
+	}
+}
+
 func TestSend_StreamerFiltersNonAllowedKinds(t *testing.T) {
 	ch := newTestChannel()
 	convID := "conv_send_filter"
@@ -503,6 +539,63 @@ func TestStreamer_Finalize(t *testing.T) {
 	ev, _ = s.next()
 	if ev.kind != eventKindTurnEnd {
 		t.Fatalf("expected turn_end, got %+v", ev)
+	}
+}
+
+func TestStreamer_ImplementsContextUsageStreamer(t *testing.T) {
+	s := newPendingStream()
+	streamer := &openResponsesStreamer{stream: s}
+
+	_, ok := interface{}(streamer).(bus.ContextUsageStreamer)
+	if !ok {
+		t.Fatal("openResponsesStreamer must implement bus.ContextUsageStreamer")
+	}
+}
+
+func TestStreamer_FinalizeWithContext_SavesUsage(t *testing.T) {
+	s := newPendingStream()
+	streamer := &openResponsesStreamer{stream: s}
+
+	usage := &bus.ContextUsage{
+		UsedTokens:  150,
+		UsedPercent: 60,
+	}
+	err := streamer.FinalizeWithContext(context.Background(), "done", usage)
+	if err != nil {
+		t.Fatalf("FinalizeWithContext error: %v", err)
+	}
+
+	got := s.getUsage()
+	if got.TotalTokens != 150 {
+		t.Fatalf("expected TotalTokens=150, got %d", got.TotalTokens)
+	}
+	if got.UsedPercent != 60 {
+		t.Fatalf("expected UsedPercent=60, got %d", got.UsedPercent)
+	}
+
+	// Drain events
+	ev, _ := s.next()
+	if ev.kind != eventKindText || ev.content != "done" {
+		t.Fatalf("expected text event with 'done', got %+v", ev)
+	}
+	ev, _ = s.next()
+	if ev.kind != eventKindTurnEnd {
+		t.Fatalf("expected turn_end, got %+v", ev)
+	}
+}
+
+func TestStreamer_FinalizeWithContext_NilUsage(t *testing.T) {
+	s := newPendingStream()
+	streamer := &openResponsesStreamer{stream: s}
+
+	err := streamer.FinalizeWithContext(context.Background(), "done", nil)
+	if err != nil {
+		t.Fatalf("FinalizeWithContext error: %v", err)
+	}
+
+	got := s.getUsage()
+	if got.TotalTokens != 0 {
+		t.Fatalf("expected zero usage, got %+v", got)
 	}
 }
 

@@ -69,6 +69,8 @@ type ContentOutput struct {
 type Usage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
+	TotalTokens  int `json:"total_tokens"`
+	UsedPercent  int `json:"used_percent,omitempty"`
 }
 
 // -- Error response --
@@ -118,6 +120,7 @@ type pendingStream struct {
 	done   chan struct{}
 	once   sync.Once
 	closed bool
+	usage  *Usage
 }
 
 func newPendingStream() *pendingStream {
@@ -126,6 +129,21 @@ func newPendingStream() *pendingStream {
 	}
 	s.cond = sync.NewCond(&s.mu)
 	return s
+}
+
+func (s *pendingStream) setUsage(u Usage) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.usage = &u
+}
+
+func (s *pendingStream) getUsage() Usage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.usage == nil {
+		return Usage{}
+	}
+	return *s.usage
 }
 
 func (s *pendingStream) push(ev streamEvent) bool {
