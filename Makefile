@@ -233,6 +233,18 @@ else
 endif
 	@echo "Build complete: $(BUILD_DIR)/picoclaw-launcher$(EXT)"
 
+## build-launcher-all: Build the picoclaw-launcher for all supported platforms
+build-launcher-all:
+	@echo "Building picoclaw-launcher for all platforms..."
+	@mkdir -p $(BUILD_DIR)
+	@$(MAKE) -C web build-frontend
+	GOOS=linux GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-linux-amd64 ./web/backend/
+	GOOS=linux GOARCH=arm GOARM=7 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-linux-arm ./web/backend/
+	GOOS=linux GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-linux-arm64 ./web/backend/
+	GOOS=darwin GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-darwin-arm64 ./web/backend/
+	GOOS=windows GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/picoclaw-launcher-windows-amd64.exe ./web/backend/
+	@echo "All launcher builds complete"
+
 build-launcher-frontend:
 	@$(MAKE) -C web build-frontend
 
