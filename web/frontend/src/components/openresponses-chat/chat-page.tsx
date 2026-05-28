@@ -149,11 +149,10 @@ export function OpenResponsesChatPage() {
     }
   }, [messages, isTyping, isAtBottom])
 
-  const handleSend = (content?: string) => {
-    const text = content !== undefined ? content : input
-    if ((!text.trim() && attachments.length === 0) || !canInput) return
+  const handleSend = () => {
+    if ((!input.trim() && attachments.length === 0) || !canInput) return
     void sendOpenResponsesMessage({
-      content: text,
+      content: input,
       attachments,
       model: defaultModelName,
     })
@@ -162,7 +161,14 @@ export function OpenResponsesChatPage() {
   }
 
   const handleSelectOption = (option: string) => {
-    handleSend(option)
+    if ((!option.trim() && attachments.length === 0) || !canInput) return
+    void sendOpenResponsesMessage({
+      content: option,
+      attachments,
+      model: defaultModelName,
+    })
+    setInput("")
+    setAttachments([])
   }
 
   const handleAddImages = () => {

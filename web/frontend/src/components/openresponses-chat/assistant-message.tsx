@@ -67,7 +67,10 @@ export function AssistantMessage({
   const blocks = parseMessageBlocks(content)
 
   return (
-    <div className="group flex w-full flex-col gap-1.5">
+    <div
+      className="group flex w-full flex-col gap-1.5"
+      style={{ contentVisibility: "auto", containIntrinsicSize: "auto 200px" }}
+    >
       {!isThought && (
         <div className="text-muted-foreground/60 flex items-center justify-between gap-2 px-1 text-xs opacity-70">
           <div className="flex items-center gap-2">

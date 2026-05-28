@@ -17,7 +17,10 @@ export function UserMessage({ content, attachments = [] }: UserMessageProps) {
   )
 
   return (
-    <div className="flex w-full flex-col items-end gap-1.5">
+    <div
+      className="flex w-full flex-col items-end gap-1.5"
+      style={{ contentVisibility: "auto", containIntrinsicSize: "auto 80px" }}
+    >
       {imageAttachments.length > 0 && (
         <div className="flex max-w-[70%] flex-wrap justify-end gap-2">
           {imageAttachments.map((attachment, index) => (
