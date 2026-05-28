@@ -475,6 +475,23 @@ func (p *Provider) Chat(
 	}
 	p.applyCustomHeaders(req)
 
+	// Debug: log full request for troubleshooting
+	headers := make(map[string]any)
+	for k, v := range req.Header {
+		val := strings.Join(v, ", ")
+		if strings.EqualFold(k, "Authorization") && len(val) > 20 {
+			val = val[:20] + "..."
+		}
+		headers[k] = val
+	}
+	logBody, _ := json.MarshalIndent(simplifyForLog(requestBody), "", "  ")
+	logger.InfoCF("openai_compat", "LLM request", map[string]any{
+		"method":  req.Method,
+		"url":     req.URL.String(),
+		"headers": headers,
+		"body":    string(logBody),
+	})
+
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
@@ -546,6 +563,23 @@ func (p *Provider) ChatStreamEvents(
 		req.Header.Set("Authorization", "Bearer "+p.apiKey)
 	}
 	p.applyCustomHeaders(req)
+
+	// Debug: log full request for troubleshooting
+	headers := make(map[string]any)
+	for k, v := range req.Header {
+		val := strings.Join(v, ", ")
+		if strings.EqualFold(k, "Authorization") && len(val) > 20 {
+			val = val[:20] + "..."
+		}
+		headers[k] = val
+	}
+	logBody, _ := json.MarshalIndent(simplifyForLog(requestBody), "", "  ")
+	logger.InfoCF("openai_compat", "LLM request (streaming)", map[string]any{
+		"method":  req.Method,
+		"url":     req.URL.String(),
+		"headers": headers,
+		"body":    string(logBody),
+	})
 
 	// Use a client without Timeout for streaming — the http.Client.Timeout covers
 	// the entire request lifecycle including body reads, which would kill long streams.
@@ -811,6 +845,54 @@ func normalizeModel(model, apiBase string) string {
 	}
 
 	return model
+}
+
+func simplifyForLog(body map[string]any) map[string]any {
+	out := make(map[string]any, len(body))
+	for k, v := range body {
+		switch k {
+		case "messages":
+			msgs, ok := v.([]any)
+			if !ok {
+				out[k] = v
+				continue
+			}
+			simplified := make([]map[string]any, len(msgs))
+			for i, m := range msgs {
+				raw, err := json.Marshal(m)
+				if err != nil {
+					simplified[i] = map[string]any{"role": "?", "content": "..."}
+					continue
+				}
+				var msg map[string]any
+				if err := json.Unmarshal(raw, &msg); err != nil {
+					simplified[i] = map[string]any{"role": "?", "content": "..."}
+					continue
+				}
+				content := "..."
+				switch c := msg["content"].(type) {
+				case string:
+					if len(c) > 64 {
+						content = c[:64] + "..."
+					} else if c != "" {
+						content = c
+					}
+				case []any:
+					content = fmt.Sprintf("[multipart:%d]", len(c))
+				}
+				simplified[i] = map[string]any{
+					"role":    msg["role"],
+					"content": content,
+				}
+			}
+			out[k] = simplified
+		case "tools":
+			// 不在日志中显示 tools 明细
+		default:
+			out[k] = v
+		}
+	}
+	return out
 }
 
 func buildToolsList(tools []ToolDefinition, nativeSearch bool) []any {

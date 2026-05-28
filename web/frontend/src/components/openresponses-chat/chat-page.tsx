@@ -149,15 +149,20 @@ export function OpenResponsesChatPage() {
     }
   }, [messages, isTyping, isAtBottom])
 
-  const handleSend = () => {
-    if ((!input.trim() && attachments.length === 0) || !canInput) return
+  const handleSend = (content?: string) => {
+    const text = content !== undefined ? content : input
+    if ((!text.trim() && attachments.length === 0) || !canInput) return
     void sendOpenResponsesMessage({
-      content: input,
+      content: text,
       attachments,
       model: defaultModelName,
     })
     setInput("")
     setAttachments([])
+  }
+
+  const handleSelectOption = (option: string) => {
+    handleSend(option)
   }
 
   const handleAddImages = () => {
@@ -307,6 +312,7 @@ export function OpenResponsesChatPage() {
                   timestamp={message.timestamp}
                   toolCalls={message.toolCalls}
                   attachments={message.attachments}
+                  onSelectOption={handleSelectOption}
                 />
               )
             })}
