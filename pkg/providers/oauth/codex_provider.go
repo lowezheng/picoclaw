@@ -104,8 +104,12 @@ func (p *CodexProvider) Chat(
 	defer stream.Close()
 
 	var resp *responses.Response
+	var streamedText strings.Builder
 	for stream.Next() {
 		evt := stream.Current()
+		if evt.Type == "response.output_text.delta" {
+			streamedText.WriteString(evt.Delta)
+		}
 		if evt.Type == "response.completed" || evt.Type == "response.failed" || evt.Type == "response.incomplete" {
 			evtResp := evt.Response
 			if evtResp.ID != "" {
@@ -153,7 +157,11 @@ func (p *CodexProvider) Chat(
 		return nil, fmt.Errorf("codex API call: stream ended without completed response")
 	}
 
-	return orc.ParseResponseFromStruct(resp), nil
+	parsed := orc.ParseResponseFromStruct(resp)
+	if parsed.Content == "" && streamedText.Len() > 0 {
+		parsed.Content = streamedText.String()
+	}
+	return parsed, nil
 }
 
 func (p *CodexProvider) GetDefaultModel() string {
