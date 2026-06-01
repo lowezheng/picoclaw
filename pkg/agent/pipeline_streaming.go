@@ -85,6 +85,13 @@ func (p *Pipeline) tryConfiguredStreamingLLM(
 			exec.llmOpts,
 			func(chunk providers.StreamChunk) {
 				recordChunk()
+				logger.DebugCF("agent", "ChatStreamEvents onChunk", map[string]any{
+					"agent_id":         ts.agent.ID,
+					"channel":          ts.channel,
+					"model":            exec.llmModel,
+					"content":          chunk.Content,
+					"reasoning_content": chunk.ReasoningContent,
+				})
 				if !exec.suppressReasoning && strings.TrimSpace(chunk.ReasoningContent) != "" {
 					publisher.UpdateReasoning(ctx, chunk.ReasoningContent)
 				}
@@ -102,6 +109,12 @@ func (p *Pipeline) tryConfiguredStreamingLLM(
 			exec.llmOpts,
 			func(accumulated string) {
 				recordChunk()
+				logger.DebugCF("agent", "ChatStream onChunk", map[string]any{
+					"agent_id":   ts.agent.ID,
+					"channel":    ts.channel,
+					"model":      exec.llmModel,
+					"accumulated": accumulated,
+				})
 				publisher.Update(ctx, accumulated)
 			},
 		)
