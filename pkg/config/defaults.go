@@ -552,6 +552,9 @@ func defaultChannels() ChannelsConfig {
 		},
 		"openresponses": map[string]any{
 			"enabled": true,
+			"settings": map[string]any{
+				"streaming": map[string]any{"enabled": true},
+			},
 		},
 		"wecom": map[string]any{
 			"settings": map[string]any{
