@@ -880,9 +880,16 @@ func simplifyForLog(body map[string]any) map[string]any {
 				case []any:
 					content = fmt.Sprintf("[multipart:%d]", len(c))
 				}
+
 				simplified[i] = map[string]any{
 					"role":    msg["role"],
 					"content": content,
+				}
+				//日志输出tool-call参数信息
+				toolCalls, ok := msg["tool_calls"]
+				if ok {
+					toolCallsByte, _ := json.Marshal(toolCalls)
+					simplified[i]["tool_calls"] = string(toolCallsByte)
 				}
 			}
 			out[k] = simplified

@@ -268,6 +268,8 @@ func seahorseToProviderMessages(result *seahorse.AssembleResult) []protocoltypes
 						Arguments: part.Arguments,
 					},
 				})
+				pm.Content = ""
+
 			}
 			if part.Type == "tool_result" {
 				pm.ToolCallID = part.ToolCallID
