@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httputil"
 
@@ -78,4 +79,43 @@ func (h *Handler) openResponsesProxyHandler() http.Handler {
 
 		h.createOpenResponsesProxy(orCfg.Token.String()).ServeHTTP(w, r)
 	})
+}
+
+// EnsureOpenResponsesChannel enables the OpenResponses channel with sane defaults
+// if it isn't already configured. Returns true when the config was modified.
+func (h *Handler) EnsureOpenResponsesChannel() (bool, error) {
+	cfg, err := config.LoadConfig(h.configPath)
+	if err != nil {
+		return false, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	changed := false
+
+	bc := cfg.Channels.GetByType(config.ChannelOpenResponses)
+	if bc == nil {
+		bc = &config.Channel{Type: config.ChannelOpenResponses}
+		cfg.Channels["openresponses"] = bc
+	}
+
+	if !bc.Enabled {
+		bc.Enabled = true
+		changed = true
+	}
+
+	if decoded, err := bc.GetDecoded(); err == nil && decoded != nil {
+		if orCfg, ok := decoded.(*config.OpenResponsesSettings); ok {
+			if orCfg.Token.String() == "" {
+				orCfg.Token = *config.NewSecureString(generateSecureToken())
+				changed = true
+			}
+		}
+	}
+
+	if changed {
+		if err := config.SaveConfig(h.configPath, cfg); err != nil {
+			return false, fmt.Errorf("failed to save config: %w", err)
+		}
+	}
+
+	return changed, nil
 }

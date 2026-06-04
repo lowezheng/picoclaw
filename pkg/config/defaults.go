@@ -550,6 +550,9 @@ func defaultChannels() ChannelsConfig {
 				"reconnect_interval": 5,
 			},
 		},
+		"openresponses": map[string]any{
+			"enabled": true,
+		},
 		"wecom": map[string]any{
 			"settings": map[string]any{
 				"websocket_url":         "wss://openws.work.weixin.qq.com",

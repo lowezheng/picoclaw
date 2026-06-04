@@ -584,6 +584,9 @@ func main() {
 	if _, err = apiHandler.EnsurePicoChannel(); err != nil {
 		logger.ErrorC("web", fmt.Sprintf("Warning: failed to ensure pico channel on startup: %v", err))
 	}
+	if _, err = apiHandler.EnsureOpenResponsesChannel(); err != nil {
+		logger.ErrorC("web", fmt.Sprintf("Warning: failed to ensure openresponses channel on startup: %v", err))
+	}
 	apiHandler.SetServerOptions(portNum, effectivePublic, explicitPublic, launcherCfg.AllowedCIDRs)
 	apiHandler.SetServerBindHost(hostInput, hostOverrideActive)
 	apiHandler.RegisterRoutes(mux)
