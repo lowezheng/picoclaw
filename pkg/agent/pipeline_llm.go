@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,9 +67,17 @@ func (p *Pipeline) CallLLM(
 		ts.markGracefulTerminalUsed()
 	}
 
+	effectiveTemp := ts.agent.Temperature
+	if ts.opts.Dispatch.InboundContext != nil {
+		if raw := ts.opts.Dispatch.InboundContext.Raw["temperature"]; raw != "" {
+			if t, err := strconv.ParseFloat(raw, 64); err == nil {
+				effectiveTemp = t
+			}
+		}
+	}
 	exec.llmOpts = map[string]any{
 		"max_tokens":       ts.agent.MaxTokens,
-		"temperature":      ts.agent.Temperature,
+		"temperature":      effectiveTemp,
 		"prompt_cache_key": ts.agent.ID,
 	}
 	if exec.useNativeSearch {

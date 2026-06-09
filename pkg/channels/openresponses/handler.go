@@ -140,7 +140,7 @@ func (c *OpenResponsesChannel) serveCreateResponse(w http.ResponseWriter, r *htt
 	}
 
 	ctx := r.Context()
-	stream, queued, err := c.dispatch(ctx, conversationID, content, imageMedia)
+	stream, queued, err := c.dispatch(ctx, conversationID, content, imageMedia, req.Temperature)
 	if err != nil {
 		writeError(w, http.StatusTooManyRequests, "rate_limit_exceeded", "", err.Error())
 		return

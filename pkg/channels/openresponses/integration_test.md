@@ -55,7 +55,7 @@ curl -v -w "\nHTTP %{http_code}\n" -X POST "http://localhost:18790/v1/responses/
   -d '{
     "input": "Say exactly: Hello from integration test",
     "conversation_id": "conv_integ_text_001"
-  }' | jq .
+  }'
 ```
 
 **期望:** `HTTP 200`, `status="completed"`, `output[0].type="message"`
@@ -78,7 +78,7 @@ curl -v -w "\nHTTP %{http_code}\n" -X POST "http://localhost:18790/v1/responses/
       {"type": "input_file", "content": "'"$PDF_B64"'"}
     ],
     "conversation_id": "conv_integ_multi_001"
-  }' | jq .
+  }'
 ```
 
 **期望:** `HTTP 200`, 返回内容包含 PDF 中的关键词（天空/蓝色/水/沸腾/openresponses）

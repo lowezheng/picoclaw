@@ -82,11 +82,15 @@ func (c *OpenResponsesChannel) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (c *OpenResponsesChannel) dispatch(ctx context.Context, conversationID, content string, media []string) (*pendingStream, bool, error) {
+func (c *OpenResponsesChannel) dispatch(ctx context.Context, conversationID, content string, media []string, temperature *float64) (*pendingStream, bool, error) {
 	sender := bus.SenderInfo{
 		Platform:    "openresponses",
 		PlatformID:  "user",
 		CanonicalID: identity.BuildCanonicalID("openresponses", "user"),
+	}
+	raw := map[string]string{"conversation_id": conversationID}
+	if temperature != nil {
+		raw["temperature"] = fmt.Sprintf("%f", *temperature)
 	}
 	inboundCtx := bus.InboundContext{
 		Channel:   c.Name(),
@@ -94,7 +98,7 @@ func (c *OpenResponsesChannel) dispatch(ctx context.Context, conversationID, con
 		ChatType:  "direct",
 		SenderID:  sender.CanonicalID,
 		MessageID: conversationID,
-		Raw:       map[string]string{"conversation_id": conversationID},
+		Raw:       raw,
 	}
 
 	// Update session registry (user message)
