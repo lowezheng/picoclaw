@@ -88,7 +88,7 @@ func DefaultConfig() *Config {
 			{
 				ModelName: "claude-sonnet-4.6",
 				Provider:  "anthropic",
-				Model:     "claude-sonnet-4.6",
+				Model:     "claude-sonnet-4-6",
 				APIBase:   "https://api.anthropic.com/v1",
 			},
 
@@ -331,6 +331,11 @@ func DefaultConfig() *Config {
 				},
 				Tavily: TavilyConfig{
 					Enabled:    false,
+					MaxResults: 5,
+				},
+				Kagi: KagiConfig{
+					Enabled:    false,
+					BaseURL:    "https://kagi.com/api/v1/search",
 					MaxResults: 5,
 				},
 				Sogou: SogouConfig{

@@ -331,6 +331,8 @@ Download the APK from [picoclaw.io](https://picoclaw.io/download/) and install d
 
 **Option 2: Termux**
 
+For a full command-line setup checklist, see the [Android Termux Guide](docs/guides/android-termux.md).
+
 <details>
 <summary><b>Terminal Launcher (for resource-constrained environments)</b></summary>
 
@@ -509,6 +511,7 @@ PicoClaw can search the web to provide up-to-date information. Configure in `too
 | [Baidu Search](https://cloud.baidu.com/doc/qianfan-api/s/Wmbq4z7e5) | Required | 1500/month (daily allocation) | AI-powered, China-optimized |
 | [Tavily](https://tavily.com) | Required | 1000 queries/month | Optimized for AI Agents |
 | [Brave Search](https://brave.com/search/api) | Required | 2000 queries/month | Fast and private |
+| [Kagi Search](https://help.kagi.com/kagi/api/search.html) | Required | Paid/limited by API setup | Premium search results |
 | [Perplexity](https://www.perplexity.ai) | Required | Paid | AI-powered search |
 | [SearXNG](https://github.com/searxng/searxng) | Not needed | Self-hosted | Free metasearch engine |
 | [GLM Search](https://open.bigmodel.cn/) | Required | Varies | Zhipu web search |
