@@ -2275,7 +2275,10 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 		"text":      text,
 	}
 
-	resultJSON, _ := json.MarshalIndent(result, "", "  ")
+	resultJSON, marshalErr := json.MarshalIndent(result, "", "  ")
+	if marshalErr != nil {
+		return ErrorResult(fmt.Sprintf("failed to marshal result: %v", marshalErr))
+	}
 
 	return &ToolResult{
 		ForLLM: string(resultJSON),
@@ -2520,7 +2523,8 @@ func isObviousPrivateHost(host string, whitelist *privateHostWhitelist) bool {
 
 // isPrivateOrRestrictedIP returns true for IPs that should never be reached via web_fetch:
 // RFC 1918, loopback, link-local (incl. cloud metadata 169.254.x.x), carrier-grade NAT,
-// IPv6 unique-local (fc00::/7), 6to4 (2002::/16), and Teredo (2001:0000::/32).
+// benchmark (198.18.0.0/15), IPv6 unique-local (fc00::/7), 6to4 (2002::/16), and
+// Teredo (2001:0000::/32).
 func isPrivateOrRestrictedIP(ip net.IP) bool {
 	if ip == nil {
 		return true
@@ -2539,7 +2543,8 @@ func isPrivateOrRestrictedIP(ip net.IP) bool {
 			(ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31) ||
 			(ip4[0] == 192 && ip4[1] == 168) ||
 			(ip4[0] == 169 && ip4[1] == 254) ||
-			(ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127) {
+			(ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127) ||
+			(ip4[0] == 198 && ip4[1] >= 18 && ip4[1] <= 19) {
 			return true
 		}
 		return false
