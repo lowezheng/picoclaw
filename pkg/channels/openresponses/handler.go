@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
 func (c *OpenResponsesChannel) WebhookPath() string {
@@ -34,6 +35,7 @@ func (c *OpenResponsesChannel) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	chatPath2 := baseNoSlash + "/chat"
 	sessionsBase := baseNoSlash + "/sessions"
 	sessionsBaseSlash := sessionsBase + "/"
+	curModelPath := baseNoSlash + "/model/current"
 	path := r.URL.Path
 
 	switch {
@@ -52,6 +54,12 @@ func (c *OpenResponsesChannel) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	case strings.HasPrefix(path, sessionsBaseSlash):
 		id := strings.TrimPrefix(path, sessionsBaseSlash)
 		c.handleSessionDetail(w, r, id)
+	case path == curModelPath:
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, "invalid_request", "", "Method not allowed")
+			return
+		}
+		c.handleCurModel(w, r)
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "", "Endpoint not found")
 	}
@@ -67,6 +75,65 @@ func (c *OpenResponsesChannel) checkAuth(r *http.Request) bool {
 		return false
 	}
 	return strings.TrimPrefix(auth, "Bearer ") == token
+}
+
+func (c *OpenResponsesChannel) handleCurModel(w http.ResponseWriter, r *http.Request) {
+	model, provider := "", ""
+	if c.appCfg != nil {
+		model = c.appCfg.Agents.Defaults.GetModelName()
+		provider = c.appCfg.Agents.Defaults.Provider
+		if provider == "" {
+			provider = c.resolveModelProvider(model)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"model":    model,
+		"provider": provider,
+	})
+}
+
+// resolveModelProvider mirrors the agent's model lookup to find the provider
+// when agents.defaults.provider is empty. It first tries GetModelConfig, then
+// falls back to scanning model_list by model_name and model identifier.
+func (c *OpenResponsesChannel) resolveModelProvider(modelName string) string {
+	if c.appCfg == nil {
+		return ""
+	}
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return ""
+	}
+
+	// Direct lookup by model_name.
+	if mc, err := c.appCfg.GetModelConfig(modelName); err == nil {
+		if p, _ := providers.ExtractProtocol(mc); p != "" {
+			return p
+		}
+	}
+
+	// Fallback: scan model_list for matching model_name or model identifier.
+	for _, mc := range c.appCfg.ModelList {
+		if mc == nil {
+			continue
+		}
+		fullModel := strings.TrimSpace(mc.Model)
+		if mc.ModelName == modelName || fullModel == modelName {
+			if p, _ := providers.ExtractProtocol(mc); p != "" {
+				return p
+			}
+		}
+		// Also match against the model ID without provider prefix.
+		_, modelID := providers.SplitModelProviderAndID(fullModel, "")
+		if modelID == modelName {
+			if p, _ := providers.ExtractProtocol(mc); p != "" {
+				return p
+			}
+		}
+	}
+
+	return ""
 }
 
 func writeError(w http.ResponseWriter, status int, errType, code, message string) {

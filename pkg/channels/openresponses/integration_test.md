@@ -172,6 +172,30 @@ curl -v -w "\nHTTP %{http_code}\n" -X GET "http://localhost:18790/v1/responses/s
 
 ---
 
+## Model API
+
+### 11. 当前模型 (TestIntegration_CurModel)
+
+```bash
+curl -v -w "\nHTTP %{http_code}\n" -X GET "http://localhost:18790/v1/responses/model/current" \
+  -H "Authorization: Bearer test-token-123" | jq .
+```
+
+**期望:** `HTTP 200`, `Content-Type: application/json`, 返回当前默认模型信息，例如 `{"model": "anthropic/claude-sonnet-4-6", "provider": "anthropic"}`
+
+---
+
+### 12. 当前模型方法不允许 (TestIntegration_CurModelMethodNotAllowed)
+
+```bash
+curl -v -w "\nHTTP %{http_code}\n" -X POST "http://localhost:18790/v1/responses/model/current" \
+  -H "Authorization: Bearer test-token-123"
+```
+
+**期望:** `HTTP 405`
+
+---
+
 ## 快速运行全部测试
 
 ```bash
@@ -198,4 +222,10 @@ curl -v -o /dev/null -w "%{http_code}\n" -X GET "http://localhost:18790/v1/respo
 
 echo "=== 7. Session not found ==="
 curl -v -o /dev/null -w "%{http_code}\n" -X GET "http://localhost:18790/v1/responses/sessions/nonexistent" -H "Authorization: Bearer test-token-123"
+
+echo "=== 8. Current model ==="
+curl -v -o /dev/null -w "%{http_code}\n" -X GET "http://localhost:18790/v1/responses/model/current" -H "Authorization: Bearer test-token-123"
+
+echo "=== 9. Current model method not allowed ==="
+curl -v -o /dev/null -w "%{http_code}\n" -X POST "http://localhost:18790/v1/responses/model/current" -H "Authorization: Bearer test-token-123"
 ```

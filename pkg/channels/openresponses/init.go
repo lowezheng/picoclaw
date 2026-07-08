@@ -22,7 +22,7 @@ func init() {
 		if !ok {
 			return nil, fmt.Errorf("channel %q: expected OpenResponsesSettings, got %T", channelName, decoded)
 		}
-		ch, err := NewOpenResponsesChannel(bc, settings, b, cfg.WorkspacePath())
+		ch, err := NewOpenResponsesChannel(bc, settings, b, cfg.WorkspacePath(), cfg)
 		if err != nil {
 			return nil, err
 		}

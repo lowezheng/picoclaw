@@ -111,6 +111,67 @@ func TestServeHTTP_MethodNotAllowed(t *testing.T) {
 	}
 }
 
+func TestServeHTTP_CurModel(t *testing.T) {
+	ch := newTestChannel()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/model/current", nil)
+	ch.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("expected application/json, got %q", ct)
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	if resp["model"] != "test-model" {
+		t.Errorf("expected model test-model, got %q", resp["model"])
+	}
+	if resp["provider"] != "test-provider" {
+		t.Errorf("expected provider test-provider, got %q", resp["provider"])
+	}
+}
+
+func TestServeHTTP_CurModel_ResolvesProviderFromModelList(t *testing.T) {
+	ch := newTestChannel()
+	ch.appCfg.Agents.Defaults.Provider = ""
+	ch.appCfg.ModelList = []*config.ModelConfig{
+		{ModelName: "other-name", Model: "openai/test-model"},
+	}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/model/current", nil)
+	ch.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	if resp["model"] != "test-model" {
+		t.Errorf("expected model test-model, got %q", resp["model"])
+	}
+	if resp["provider"] != "openai" {
+		t.Errorf("expected provider openai from model_list, got %q", resp["provider"])
+	}
+}
+
+func TestServeHTTP_CurModelMethodNotAllowed(t *testing.T) {
+	ch := newTestChannel()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses/model/current", nil)
+	ch.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", rr.Code)
+	}
+}
+
 func TestBuildResponse_EmptyStream(t *testing.T) {
 	ch := newTestChannel()
 	s := newPendingStream()
@@ -203,14 +264,21 @@ func TestBuildResponse_StripImageContent(t *testing.T) {
 	}
 }
 
-
 // -- helpers --
 
 func newTestChannel() *OpenResponsesChannel {
 	ch := &OpenResponsesChannel{
 		BaseChannel: newTestBaseChannel(),
 		cfg:         &config.OpenResponsesSettings{Token: *testSecureString("test-token")},
-		convs:       make(map[string]*conversationState),
+		appCfg: &config.Config{
+			Agents: config.AgentsConfig{
+				Defaults: config.AgentDefaults{
+					ModelName: "test-model",
+					Provider:  "test-provider",
+				},
+			},
+		},
+		convs: make(map[string]*conversationState),
 	}
 	ch.SetRunning(true)
 	return ch
@@ -304,19 +372,19 @@ func TestServeStream_TextOnly(t *testing.T) {
 	events := parseSSEEvents(rr.Body.String())
 	assertEventSequence(t, events, []string{
 		"response.in_progress",
-		"response.output_item.added",     // message start
-		"response.content_part.added",    // output_text part
-		"response.output_text.delta",     // Hello
-		"response.output_text.delta",     // world
+		"response.output_item.added",  // message start
+		"response.content_part.added", // output_text part
+		"response.output_text.delta",  // Hello
+		"response.output_text.delta",  // world
 		"response.output_text.done",
 		"response.content_part.done",
-		"response.output_item.done",      // message done
-		"response.output_item.added",     // duration item
+		"response.output_item.done",  // message done
+		"response.output_item.added", // duration item
 		"response.content_part.added",
-		"response.output_text.delta",     // duration text
+		"response.output_text.delta", // duration text
 		"response.output_text.done",
 		"response.content_part.done",
-		"response.output_item.done",      // duration done
+		"response.output_item.done", // duration done
 		"response.completed",
 	})
 
@@ -368,30 +436,30 @@ func TestServeStream_ReasoningAfterText(t *testing.T) {
 	// Text closes (with duration item), then reasoning starts (with duration item)
 	assertEventSequence(t, events, []string{
 		"response.in_progress",
-		"response.output_item.added",     // message
-		"response.content_part.added",    // output_text
-		"response.output_text.delta",     // Hello
+		"response.output_item.added",  // message
+		"response.content_part.added", // output_text
+		"response.output_text.delta",  // Hello
 		"response.output_text.done",
 		"response.content_part.done",
-		"response.output_item.done",      // message done
-		"response.output_item.added",     // text duration item
+		"response.output_item.done",  // message done
+		"response.output_item.added", // text duration item
 		"response.content_part.added",
-		"response.output_text.delta",     // text duration
+		"response.output_text.delta", // text duration
 		"response.output_text.done",
 		"response.content_part.done",
-		"response.output_item.done",      // text duration done
-		"response.output_item.added",     // reasoning
-		"response.content_part.added",    // reasoning_text
-		"response.reasoning_text.delta",  // Let me think
+		"response.output_item.done",     // text duration done
+		"response.output_item.added",    // reasoning
+		"response.content_part.added",   // reasoning_text
+		"response.reasoning_text.delta", // Let me think
 		"response.reasoning_text.done",
 		"response.content_part.done",
-		"response.output_item.done",      // reasoning done
-		"response.output_item.added",     // reasoning duration item
+		"response.output_item.done",  // reasoning done
+		"response.output_item.added", // reasoning duration item
 		"response.content_part.added",
-		"response.output_text.delta",     // reasoning duration
+		"response.output_text.delta", // reasoning duration
 		"response.output_text.done",
 		"response.content_part.done",
-		"response.output_item.done",      // reasoning duration done
+		"response.output_item.done", // reasoning duration done
 		"response.completed",
 	})
 
@@ -438,24 +506,24 @@ func TestServeStream_FunctionCallSequence(t *testing.T) {
 
 	assertEventSequence(t, events, []string{
 		"response.in_progress",
-		"response.output_item.added",              // message
-		"response.content_part.added",             // output_text
-		"response.output_text.delta",              // Let me
+		"response.output_item.added",  // message
+		"response.content_part.added", // output_text
+		"response.output_text.delta",  // Let me
 		"response.output_text.done",
 		"response.content_part.done",
-		"response.output_item.done",               // message done
-		"response.output_item.added",              // text duration item
+		"response.output_item.done",  // message done
+		"response.output_item.added", // text duration item
 		"response.content_part.added",
-		"response.output_text.delta",              // text duration
+		"response.output_text.delta", // text duration
 		"response.output_text.done",
 		"response.content_part.done",
-		"response.output_item.done",               // text duration done
-		"response.output_item.added",              // function_call
-		"response.content_part.added",             // function_call_arguments
-		"response.function_call_arguments.delta",  // args
+		"response.output_item.done",              // text duration done
+		"response.output_item.added",             // function_call
+		"response.content_part.added",            // function_call_arguments
+		"response.function_call_arguments.delta", // args
 		"response.function_call_arguments.done",
 		"response.content_part.done",
-		"response.output_item.done",               // function_call done
+		"response.output_item.done", // function_call done
 		"response.completed",
 	})
 
@@ -515,10 +583,10 @@ func TestServeStream_ImageEvent(t *testing.T) {
 
 	assertEventSequence(t, events, []string{
 		"response.in_progress",
-		"response.output_item.added",     // message
-		"response.content_part.added",    // output_image
-		"response.content_part.done",     // output_image
-		"response.output_item.done",      // message done
+		"response.output_item.added",  // message
+		"response.content_part.added", // output_image
+		"response.content_part.done",  // output_image
+		"response.output_item.done",   // message done
 		"response.completed",
 	})
 }
